@@ -1,4 +1,4 @@
-# uTubby — Project Handover
+# Y2obi — Project Handover
 
 ## Status: v2 — Desktop + Web (Flask/Vitra) + Cookie support
 
@@ -40,7 +40,7 @@
 6. Video HD / MP3 Audio → thread `download_mp4()` / `download_mp3()`
 7. Progress: bar + pct + speed + ETA
 8. Cancel → flag → `DownloadError` → "Cancelled"
-9. Complete → open `~/Videos/uTubby/` in Explorer
+9. Complete → open `~/Videos/Y2obi/` in Explorer
 
 ## Web Data Flow
 1. `GET /` → render Vitra SPA
@@ -87,12 +87,12 @@ Dict: `Best` → `bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best`, `10
 ```
 pip install pyinstaller
 pyinstaller build.spec
-# Output: dist/uTubby.exe (~35-50 MB)
+# Output: dist/Y2obi.exe (~35-50 MB)
 ```
 `core/ffmpeg.exe` NOT bundled. Auto-downloads on first run.
 
 ## Output Directory
-`C:\Users\<user>\Videos\uTubby\` — created on first download.
+`C:\Users\<user>\Videos\Y2obi\` — created on first download.
 
 ## Known Limitations
 1. **No playlist support** — Single video only

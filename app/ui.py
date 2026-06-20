@@ -62,7 +62,7 @@ class App(ctk.CTk):
         self._downloading = False
         self._last_error_details = None
 
-        self.title("uTubby")
+        self.title("Y2obi")
         self.geometry("700x580")
         self.minsize(640, 500)
         self._center()
@@ -312,7 +312,7 @@ class App(ctk.CTk):
         self._downloading = True
         self._update_btn_states()
 
-        output_dir = os.path.join(os.path.expanduser("~"), "Videos", "uTubby")
+        output_dir = os.path.join(os.path.expanduser("~"), "Videos", "Y2obi")
         os.makedirs(output_dir, exist_ok=True)
 
         quality = self.quality_var.get() if fmt == "mp4" else "Best"
@@ -357,7 +357,7 @@ class App(ctk.CTk):
         self.progress_bar.set(1.0)
         self.pct_label.configure(text="100%")
         label = "Video" if fmt == "mp4" else "Audio"
-        self.status_label.configure(text=f"{label} saved to ~/Videos/uTubby/")
+        self.status_label.configure(text=f"{label} saved to ~/Videos/Y2obi/")
         self.speed_label.configure(text="Done")
         self._downloading = False
         self._update_btn_states()

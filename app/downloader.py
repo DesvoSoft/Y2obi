@@ -177,7 +177,7 @@ class Downloader:
             count = len(info.get('entries', []))
             raise PlaylistError(
                 f"Playlist detected: \"{title}\" ({count} videos)\n\n"
-                "uTubby does not support playlists.\n"
+                "Y2obi does not support playlists.\n"
                 "Paste a single video URL instead."
             )
 

@@ -9,8 +9,8 @@
 
 ### 1. Clone repo
 ```bash
-git clone <your-repo-url> uTubby
-cd uTubby
+git clone <your-repo-url> Y2obi
+cd Y2obi
 ```
 
 ### 2. Create venv & install deps
@@ -26,19 +26,19 @@ pip install -r requirements.txt
 - Python version: 3.12 or 3.14 (match your venv)
 
 ### 4. WSGI configuration
-- **Code** > **WSGI configuration file**: browse to `uTubby/web/wsgi.py`
+- **Code** > **WSGI configuration file**: browse to `Y2obi/web/wsgi.py`
 - Or copy contents of `web/wsgi.py` into the PA WSGI file
 
 ### 5. Working directory
-- **Code** > **Working directory**: `/home/<username>/uTubby`
+- **Code** > **Working directory**: `/home/<username>/Y2obi`
 
 ### 6. Static files
 - **Static files**:
-  - URL: `/static/vitra/` → Directory: `/home/<username>/uTubby/web/static/vitra/`
+  - URL: `/static/vitra/` → Directory: `/home/<username>/Y2obi/web/static/vitra/`
 - (Everything else is served by Flask at `/static/`)
 
 ### 7. Virtualenv
-- **Virtualenv**: `/home/<username>/uTubby/venv`
+- **Virtualenv**: `/home/<username>/Y2obi/venv`
 
 ### 8. Reload
 - Click **Reload** green button
@@ -52,7 +52,7 @@ pip install -r requirements.txt
 - No `yt-dlp` CLI on PATH (uses Python package)
 - FFmpeg is at `/usr/bin/ffmpeg` on haggis image
 - Download speeds limited (~200 Mbps) on free tier
-- Files saved to `~/Videos/uTubby/` on PA filesystem (not served by web app)
+- Files saved to `~/Videos/Y2obi/` on PA filesystem (not served by web app)
 - Web app downloads to temp dir, served via Flask, then deleted
 
 ## Troubleshooting

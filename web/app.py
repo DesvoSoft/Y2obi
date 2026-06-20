@@ -34,7 +34,7 @@ if _cookies_b64 and not os.path.exists(COOKIES_PATH):
             _f.write(_b64.b64decode(_cookies_b64))
         dl.cookies = COOKIES_PATH
     except Exception as _e:
-        print(f"[uTubby] COOKIES_B64 decode failed: {_e}")
+        print(f"[Y2obi] COOKIES_B64 decode failed: {_e}")
 tasks = {}
 _lock = threading.Lock()
 _CLEANUP_AFTER = 600
@@ -210,7 +210,7 @@ def start_download():
     with _lock:
         tasks[task_id] = task
 
-    output_dir = os.environ.get("DOWNLOAD_DIR", "/tmp/utubby-web")
+    output_dir = os.environ.get("DOWNLOAD_DIR", "/tmp/y2obi-web")
     os.makedirs(output_dir, exist_ok=True)
 
     task_dl.set_callbacks(progress=_progress_cb(task_id), status=_status_cb(task_id))

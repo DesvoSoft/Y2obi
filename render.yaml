@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: utubby
+    name: y2obi
     runtime: python
     buildCommand: pip install -r requirements-web.txt
     startCommand: gunicorn web.app:app --workers 2 --timeout 120 --bind 0.0.0.0:$PORT
@@ -10,4 +10,4 @@ services:
       - key: COOKIES_B64
         sync: false
       - key: DOWNLOAD_DIR
-        value: /tmp/utubby-web
+        value: /tmp/y2obi-web
