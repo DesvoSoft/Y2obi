@@ -88,13 +88,20 @@ def index():
     return render_template("index.html")
 
 
+def _make_dl():
+    """Fresh Downloader per request — reads cookies from disk, no worker state sharing."""
+    cookies = COOKIES_PATH if os.path.exists(COOKIES_PATH) else None
+    print(f"[Y2obi] _make_dl cookies={cookies}", flush=True)
+    return Downloader(ffmpeg_path, cookies=cookies)
+
+
 @app.route("/api/analyze", methods=["POST"])
 def analyze():
     url = (request.json or {}).get("url", "").strip()
     if not url:
         return jsonify({"error": "URL is required"}), 400
     try:
-        info = dl.get_info(url)
+        info = _make_dl().get_info(url)
     except PlaylistError as e:
         return jsonify({"error": str(e), "playlist": True}), 400
     except DownloadError as e:
