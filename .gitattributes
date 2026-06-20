@@ -1,0 +1,10 @@
+* text=auto eol=lf
+*.py text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.yaml text eol=lf
+*.spec text eol=lf
+Procfile text eol=lf

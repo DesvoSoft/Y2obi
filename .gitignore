@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+.env
+*.egg
+
+# Desktop binary (auto-downloaded at runtime)
+core/ffmpeg.exe
+core/
+
+# Cookies (sensitive — provide via COOKIES_B64 env var on Render)
+web/cookies/cookies.txt
+
+# Downloads (ephemeral, never committed)
+web/downloads/
+
+# PyInstaller build artifacts (keep build.spec, ignore output)
+dist/
+
+# IDE / OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/settings.local.json
