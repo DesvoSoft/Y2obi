@@ -10,6 +10,28 @@ from flask import Flask, render_template, request, jsonify, send_file, abort
 from app.downloader import Downloader, DownloadError, PlaylistError, export_cookies_from_browser, _parse_formats
 from app.binaries import ensure_ffmpeg
 
+# Start bgutil POT provider HTTP server (port 4416) — yt-dlp auto-discovers it
+def _start_bgutil():
+    import subprocess, shutil
+    node = shutil.which("node")
+    if not node:
+        print("[Y2obi] Node.js not found — bgutil disabled", flush=True)
+        return
+    server_home = os.environ.get("BGUTIL_SERVER_HOME", "/opt/bgutil/server")
+    main_js = os.path.join(server_home, "build", "main.js")
+    if not os.path.exists(main_js):
+        print(f"[Y2obi] bgutil main.js not found at {main_js} — bgutil disabled", flush=True)
+        return
+    def _run():
+        print(f"[Y2obi] Starting bgutil server: {main_js}", flush=True)
+        proc = subprocess.Popen([node, main_js], cwd=server_home,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc.wait()
+        print("[Y2obi] bgutil server exited", flush=True)
+    threading.Thread(target=_run, daemon=True).start()
+
+_start_bgutil()
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", uuid.uuid4().hex)
 

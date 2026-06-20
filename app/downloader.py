@@ -161,19 +161,17 @@ class Downloader:
 
     def get_info(self, url):
         has_cookies = bool(self.cookies and os.path.exists(self.cookies))
-        # web client returns full DASH format list when cookies present
-        # mweb fallback for no-cookie case (less bot-aggressive but limited formats)
-        client = 'web' if has_cookies else 'mweb'
         opts = {
             'quiet': True,
             'no_warnings': True,
             'socket_timeout': 30,
             'extract_flat': False,
             'playlist_items': '1',
-            'extractor_args': {'youtube': {'player_client': [client, 'android_vr']}},
+            # web client + bgutil POT provider = full DASH formats, no bot check
+            'extractor_args': {'youtube': {'player_client': ['web']}},
         }
         self._apply_cookies_file_only(opts)
-        print(f"[Y2obi] get_info cookies_exist={has_cookies} client={client}", flush=True)
+        print(f"[Y2obi] get_info cookies_exist={has_cookies}", flush=True)
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -210,7 +208,7 @@ class Downloader:
 
     def _base_opts(self, template):
         has_cookies = bool(self.cookies and os.path.exists(self.cookies))
-        clients = ['mweb', 'web'] if has_cookies else ['mweb', 'android_vr']
+        clients = ['web']  # bgutil POT provider handles bot bypass
         opts = {
             'outtmpl': template,
             'ffmpeg_location': self._ffmpeg_dir(),
