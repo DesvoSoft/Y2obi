@@ -10,14 +10,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 class FFmpegSplash:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("uTubby")
+        self.root.title("Y2obi")
         self.root.geometry("420x160")
         self.root.resizable(False, False)
         self.root.configure(bg="#1a1a2e")
 
         self._center()
 
-        title = tk.Label(self.root, text="uTubby", font=("Segoe UI", 20, "bold"),
+        title = tk.Label(self.root, text="Y2obi", font=("Segoe UI", 20, "bold"),
                          bg="#1a1a2e", fg="#e0e0e0")
         title.pack(pady=(20, 4))
 

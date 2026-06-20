@@ -41,7 +41,7 @@ python web/app.py
 |----------|----------|-------------|
 | `SECRET_KEY` | Auto-generated | Flask session key (Render generates it) |
 | `COOKIES_B64` | Optional | Base64-encoded `cookies.txt` for cookie auth |
-| `DOWNLOAD_DIR` | Optional | Temp download path (default: `/tmp/utubby-web`) |
+| `DOWNLOAD_DIR` | Optional | Temp download path (default: `/tmp/y2obi-web`) |
 
 **To encode your cookies file:**
 ```bash
@@ -69,7 +69,7 @@ FFmpeg is auto-downloaded on first run (`core/ffmpeg.exe`).
 ```bash
 pip install pyinstaller
 pyinstaller build.spec
-# Output: dist/uTubby.exe
+# Output: dist/Y2obi.exe
 ```
 
 ---
