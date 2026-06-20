@@ -1,0 +1,5 @@
+customtkinter>=5.2.2
+yt-dlp>=2024.12.0
+pillow>=10.0.0
+flask>=3.0.0
+pycryptodome>=3.20.0

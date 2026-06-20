@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: utubby
+    runtime: python
+    buildCommand: pip install -r requirements-web.txt
+    startCommand: gunicorn web.app:app --workers 2 --timeout 120 --bind 0.0.0.0:$PORT
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: COOKIES_B64
+        sync: false
+      - key: DOWNLOAD_DIR
+        value: /tmp/utubby-web

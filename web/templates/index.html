@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>uTubby - YouTube Downloader</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='vitra/vitra.min.css', v=2) }}">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { min-height: 100vh; margin: 0; }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 0;
+    position: relative;
+    background: #0a0a12;
+  }
+  .vitra-gradient-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    opacity: .5;
+  }
+  .vitra-glow-orb {
+    z-index: 0;
+  }
+
+  .app-wrap {
+    position: relative;
+    z-index: 1;
+    width: 680px;
+    max-width: 94vw;
+    background: rgba(10, 10, 18, .35);
+    border-radius: 24px;
+    padding: 28px 24px 18px;
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 40px rgba(0,0,0,.5);
+  }
+
+  .app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+  }
+  .logo-group { display: flex; align-items: center; gap: 12px; }
+  .logo-icon {
+    width: 40px; height: 40px; border-radius: 12px;
+    background: linear-gradient(135deg, var(--vitra-color-accent), #7c4dff);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; color: #fff; flex-shrink: 0;
+  }
+  .logo-text {
+    font-size: 22px; font-weight: 800; margin: 0; line-height: 1.1;
+  }
+  .logo-sub {
+    font-size: 11px; color: var(--vitra-color-text-tertiary); margin: 0;
+  }
+
+  .theme-picker { display: flex; gap: 6px; }
+  .theme-chip {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 2px solid transparent; cursor: pointer;
+    transition: all .25s ease; position: relative;
+  }
+  .theme-chip:hover { transform: scale(1.15); }
+  .theme-chip.active { border-color: var(--vitra-color-text-primary); box-shadow: 0 0 12px rgba(255,255,255,.15); }
+  .theme-chip[data-theme="dark"] { background: #1a1a2e; }
+  .theme-chip[data-theme="neon"] { background: #00ffff; }
+  .theme-chip[data-theme="ocean"] { background: #0088ff; }
+  .theme-chip[data-theme="emerald"] { background: #00cc88; }
+  .theme-chip[data-theme="pastel"] { background: #ffb6c1; }
+
+  .url-row {
+    display: grid; grid-template-columns: 1fr auto; gap: 10px;
+    margin-bottom: 20px; position: relative;
+  }
+  .url-row input {
+    width: 100%; min-width: 0; height: 48px; padding: 0 16px;
+    border: 1px solid var(--vitra-color-border);
+    border-radius: 12px; background: var(--vitra-color-surface);
+    color: var(--vitra-color-text-primary); font-size: 14px; outline: none;
+    transition: border-color .25s ease, box-shadow .25s ease;
+  }
+  .url-row input:focus {
+    border-color: var(--vitra-color-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--vitra-color-accent) 20%, transparent);
+  }
+  .url-row input::placeholder { color: var(--vitra-color-text-tertiary); }
+  .url-row .analyze-btn { height: 48px; min-width: 120px; border-radius: 12px; }
+
+  .info-card { padding: 0; overflow: hidden; display: none; margin-bottom: 20px; }
+  .info-card.visible { display: block; }
+  .info-inner {
+    display: flex; gap: 18px; padding: 20px;
+  }
+  .thumb-wrap {
+    width: 180px; height: 101px; border-radius: 10px; overflow: hidden;
+    background: var(--vitra-color-surface); flex-shrink: 0;
+    position: relative;
+  }
+  .thumb-wrap img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+  }
+  .thumb-placeholder {
+    width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: var(--vitra-color-text-tertiary);
+  }
+  .info-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .info-body .title {
+    font-size: 16px; font-weight: 700; line-height: 1.35;
+    color: var(--vitra-color-text-primary);
+  }
+  .info-body .channel {
+    font-size: 13px; color: var(--vitra-color-text-secondary);
+  }
+  .info-body .meta {
+    font-size: 13px; color: var(--vitra-color-text-tertiary);
+  }
+
+  .quality-bar {
+    margin-top: 10px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .quality-bar-label {
+    font-size: 11px; color: var(--vitra-color-text-tertiary); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .5px;
+  }
+  .quality-chips {
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .q-chip {
+    padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;
+    border: 1px solid var(--vitra-color-border); background: var(--vitra-color-surface);
+    color: var(--vitra-color-text-secondary); cursor: pointer; transition: all .2s;
+    user-select: none;
+  }
+  .q-chip:hover { border-color: var(--vitra-color-accent); color: var(--vitra-color-accent); }
+  .q-chip.active {
+    background: var(--vitra-color-accent); border-color: var(--vitra-color-accent);
+    color: #fff;
+  }
+
+  .format-row {
+    display: flex; gap: 8px; margin-bottom: 12px;
+  }
+  .fmt-chip {
+    flex: 1; height: 44px; border-radius: 12px; font-size: 13px; font-weight: 700;
+    border: 1.5px solid var(--vitra-color-border); background: var(--vitra-color-surface);
+    color: var(--vitra-color-text-secondary); cursor: pointer; transition: all .2s;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 1px; letter-spacing: .5px; user-select: none;
+  }
+  .fmt-chip:hover { border-color: var(--vitra-color-accent); color: var(--vitra-color-accent); }
+  .fmt-chip.active {
+    background: color-mix(in srgb, var(--vitra-color-accent) 15%, transparent);
+    border-color: var(--vitra-color-accent); color: var(--vitra-color-accent);
+  }
+  .fmt-chip .fmt-ext { font-size: 15px; font-weight: 800; }
+  .fmt-chip .fmt-desc { font-size: 9px; opacity: .7; text-transform: uppercase; letter-spacing: .5px; }
+  .actions-row {
+    display: flex; gap: 10px; margin-bottom: 20px;
+  }
+  .actions-row button { flex: 1; height: 48px; border-radius: 12px; font-weight: 600; }
+  .actions-row .btn-cancel { flex: 0 0 110px; }
+
+  .progress-card { display: none; margin-bottom: 16px; }
+  .progress-card.visible { display: block; }
+
+  .progress-stats {
+    display: flex; margin-top: 6px; font-size: 13px; align-items: center;
+  }
+  .progress-stats .pct { width: 48px; font-weight: 700; color: var(--vitra-color-text-primary); }
+  .progress-stats .status { flex: 1; color: var(--vitra-color-text-secondary); }
+  .progress-stats .speed-eta { color: var(--vitra-color-text-tertiary); font-size: 12px; }
+
+  .footer {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; color: var(--vitra-color-text-tertiary);
+  }
+  .footer-left { display: flex; align-items: center; gap: 8px; }
+  .footer-link {
+    color: var(--vitra-color-text-tertiary); text-decoration: none;
+    transition: color .2s;
+  }
+  .footer-link:hover { color: var(--vitra-color-accent); }
+  .footer-sep { opacity: .3; }
+  .btn-details {
+    background: var(--vitra-color-surface); color: var(--vitra-color-text-secondary);
+    border: 1px solid var(--vitra-color-border); border-radius: 6px;
+    padding: 4px 12px; cursor: pointer; font-size: 11px; display: none;
+  }
+  .btn-details:hover { background: var(--vitra-color-surface-hover); }
+  .cookie-badge {
+    font-size: 10px; padding: 2px 8px; border-radius: 6px; cursor: pointer;
+    background: rgba(200,50,50,.2); color: #f0a0a0; border: 1px solid rgba(200,50,50,.25);
+    transition: all .2s;
+  }
+  .cookie-badge.loaded {
+    background: rgba(50,200,100,.15); color: #a0f0b0; border-color: rgba(50,200,100,.25);
+  }
+  .cookie-badge:hover { filter: brightness(1.3); }
+  .kbd-hint { font-size: 11px; opacity: .5; display: flex; align-items: center; gap: 8px; }
+  .kbd-hint kbd {
+    padding: 1px 6px; border-radius: 4px;
+    background: var(--vitra-color-surface); border: 1px solid var(--vitra-color-border);
+    font-size: 10px; font-family: inherit;
+  }
+
+  .error-msg {
+    background: rgba(200, 50, 50, .12);
+    border: 1px solid rgba(200, 50, 50, .25);
+    border-radius: 10px; padding: 12px 16px; margin-bottom: 16px;
+    font-size: 13px; color: #f0a0a0; display: none; word-break: break-word;
+  }
+  .error-msg.visible { display: block; }
+  .toast {
+    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+    background: var(--vitra-color-surface); color: var(--vitra-color-text-primary);
+    padding: 12px 24px; border-radius: 10px; font-size: 13px;
+    opacity: 0; transition: opacity .35s ease; pointer-events: none;
+    border: 1px solid var(--vitra-color-border); z-index: 100;
+  }
+  .toast.show { opacity: 1; }
+
+  @media (max-width: 640px) {
+    .info-inner { flex-direction: column; }
+    .thumb-wrap { width: 100%; height: auto; aspect-ratio: 16/9; }
+    .app-header { flex-direction: column; gap: 12px; align-items: flex-start; }
+    .actions-row .btn-cancel { flex: 1; }
+  }
+</style>
+</head>
+<body>
+
+<div class="vitra-gradient-bg"></div>
+<div class="vitra-glow-orb vitra-glow-orb-1" style="top:-10%;left:-5%"></div>
+<div class="vitra-glow-orb vitra-glow-orb-2" style="bottom:-15%;right:-5%"></div>
+<div class="vitra-glow-orb vitra-glow-orb-3" style="top:40%;left:60%"></div>
+
+<div class="app-wrap">
+
+  <div class="app-header">
+    <div class="logo-group">
+      <div class="logo-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M10 9l5 3-5 3V9z"/><rect x="3" y="5" width="18" height="14" rx="4"/></svg></div>
+      <div>
+        <h1 class="logo-text vitra-gradient-text">uTubby</h1>
+        <p class="logo-sub">YouTube downloader</p>
+      </div>
+    </div>
+    <div class="theme-picker" id="themePicker">
+      <div class="theme-chip active" data-theme="dark" title="Dark"></div>
+      <div class="theme-chip" data-theme="neon" title="Neon"></div>
+      <div class="theme-chip" data-theme="ocean" title="Ocean"></div>
+      <div class="theme-chip" data-theme="emerald" title="Emerald"></div>
+      <div class="theme-chip" data-theme="pastel" title="Pastel"></div>
+    </div>
+  </div>
+
+  <div class="url-row">
+    <div class="input-wrap">
+      <input id="urlInput" type="text" placeholder="Paste YouTube URL and press Enter..." autofocus>
+    </div>
+    <button class="vitra-btn vitra-btn-glass analyze-btn" id="analyzeBtn">Analyze</button>
+  </div>
+
+  <div id="errorMsg" class="error-msg">
+    <span id="errorText"></span>
+  </div>
+
+  <div id="infoCard" class="vitra-card vitra-card-glass info-card vitra-spotlight">
+    <div class="info-inner">
+      <div class="thumb-wrap">
+        <div class="thumb-placeholder" id="thumbPlaceholder">No thumbnail</div>
+        <img id="thumbImg" src="" alt="" loading="lazy" style="display:none">
+      </div>
+      <div class="info-body">
+        <div class="title" id="titleText">No video analyzed</div>
+        <div class="channel" id="channelText"></div>
+        <div class="meta" id="metaText"></div>
+        <div class="quality-bar" id="qualityBar" style="display:none">
+          <div class="quality-bar-label">Quality</div>
+          <div class="quality-chips" id="qualityChips"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="format-row" id="formatRow">
+    <button class="fmt-chip active" id="fmtMp4" disabled>
+      <span class="fmt-ext">MP4</span>
+      <span class="fmt-desc">Video</span>
+    </button>
+    <button class="fmt-chip" id="fmtWebm" disabled>
+      <span class="fmt-ext">WEBM</span>
+      <span class="fmt-desc">Smaller</span>
+    </button>
+    <button class="fmt-chip" id="fmtMp3" disabled>
+      <span class="fmt-ext">MP3</span>
+      <span class="fmt-desc">Audio</span>
+    </button>
+  </div>
+  <div class="actions-row" id="actionsRow">
+    <button class="vitra-btn vitra-btn-primary" id="downloadBtn" disabled>Download</button>
+    <button class="vitra-btn btn-cancel" id="cancelBtn" disabled>Cancel</button>
+  </div>
+
+  <div id="progressCard" class="vitra-card vitra-card-glass progress-card">
+    <div class="vitra-progress-container">
+      <div class="vitra-progress vitra-progress-lg">
+        <div class="vitra-progress-bar vitra-progress-bar-striped vitra-progress-bar-animated" id="barFill" style="width:0%"></div>
+      </div>
+      <span class="vitra-progress-value" id="pctText"></span>
+    </div>
+    <div class="progress-stats">
+      <span class="status" id="statusText">Ready</span>
+      <span class="speed-eta" id="speedText"></span>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-left">
+      <span id="cookieBadge" class="cookie-badge" title="No cookies loaded. YouTube may ask for sign-in.">bot</span>
+      <input type="file" id="cookieInput" accept=".txt" style="display:none">
+      <a class="footer-link" href="https://github.com/DesvoSoft" target="_blank">DesvoSoft</a>
+      <span class="footer-sep">|</span>
+      <a class="footer-link" href="https://desvosoft.github.io/Vitra/" target="_blank">Vitra</a>
+      <span class="footer-sep">|</span>
+      <button id="detailsBtn" class="btn-details">Details</button>
+    </div>
+    <div class="kbd-hint">
+      <span>Enter to analyze</span>
+      <kbd>Ctrl+V</kbd> <kbd>Enter</kbd>
+    </div>
+  </div>
+
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="{{ url_for('static', filename='vitra/vitra.min.js') }}"></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  Vitra.theme.init({ defaultTheme: 'dark', persist: true });
+  Vitra.particles.spawn(18, { color: 'var(--vitra-color-accent)', size: 4, });
+  Vitra.particles.spawn(14, { color: '#7c4dff', size: 3, });
+  Vitra.particles.spawn(10, { color: '#ff6b9d', size: 2, });
+
+  const $ = id => document.getElementById(id);
+  const URL_INPUT = $('urlInput');
+  const ANALYZE_BTN = $('analyzeBtn');
+  const ERROR_MSG = $('errorMsg');
+  const ERROR_TEXT = $('errorText');
+  const INFO_CARD = $('infoCard');
+  const THUMB_PLACEHOLDER = $('thumbPlaceholder');
+  const THUMB_IMG = $('thumbImg');
+  const TITLE_TEXT = $('titleText');
+  const CHANNEL_TEXT = $('channelText');
+  const META_TEXT = $('metaText');
+  const QUALITY_BAR = $('qualityBar');
+  const QUALITY_CHIPS = $('qualityChips');
+  let selectedQuality = 'Best';
+  const FMT_MP4 = $('fmtMp4');
+  const FMT_WEBM = $('fmtWebm');
+  const FMT_MP3 = $('fmtMp3');
+  const DOWNLOAD_BTN = $('downloadBtn');
+  const CANCEL_BTN = $('cancelBtn');
+  let selectedFormat = 'mp4';
+  const fmtChips = [FMT_MP4, FMT_WEBM, FMT_MP3];
+  const fmtMap = { fmtMp4: 'mp4', fmtWebm: 'webm', fmtMp3: 'mp3' };
+  const PROGRESS_CARD = $('progressCard');
+  const BAR_FILL = $('barFill');
+  const PCT_TEXT = $('pctText');
+  const STATUS_TEXT = $('statusText');
+  const SPEED_TEXT = $('speedText');
+  const DETAILS_BTN = $('detailsBtn');
+  const TOAST = $('toast');
+  const COOKIE_BADGE = $('cookieBadge');
+  const COOKIE_INPUT = $('cookieInput');
+
+  let videoInfo = null;
+  let currentUrl = null;
+  let downloading = false;
+  let taskId = null;
+  let pollTimer = null;
+  let lastError = null;
+
+  document.querySelectorAll('.theme-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelector('.theme-chip.active')?.classList.remove('active');
+      chip.classList.add('active');
+      Vitra.theme.set(chip.dataset.theme);
+    });
+  });
+
+  URL_INPUT.addEventListener('keydown', e => { if (e.key === 'Enter') onAnalyze(); });
+  ANALYZE_BTN.addEventListener('click', onAnalyze);
+  fmtChips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      if (chip.disabled) return;
+      fmtChips.forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      selectedFormat = fmtMap[chip.id];
+      QUALITY_BAR.style.display = selectedFormat === 'mp3' ? 'none' : 'flex';
+    });
+  });
+  DOWNLOAD_BTN.addEventListener('click', () => startDownload(selectedFormat));
+  CANCEL_BTN.addEventListener('click', onCancel);
+  DETAILS_BTN.addEventListener('click', showDetails);
+  COOKIE_BADGE.addEventListener('click', showCookieMenu);
+
+  function showCookieMenu() {
+    const existing = document.getElementById('cookieMenu');
+    if (existing) { existing.remove(); return; }
+    const menu = document.createElement('div');
+    menu.id = 'cookieMenu';
+    menu.style.cssText = 'position:fixed;bottom:60px;left:50%;transform:translateX(-50%);background:var(--vitra-color-surface,#1e1e2e);border:1px solid var(--vitra-color-border,#444);border-radius:12px;padding:16px;z-index:9999;min-width:260px;box-shadow:0 8px 32px rgba(0,0,0,.5)';
+    menu.innerHTML = `
+      <div style="font-size:.75rem;color:var(--vitra-color-muted,#888);margin-bottom:10px;text-align:center">LOAD YOUTUBE COOKIES</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="vitra-btn vitra-btn-primary" id="exportFirefox">Firefox (recommended)</button>
+        <button class="vitra-btn vitra-btn-secondary" id="exportEdge">Edge (close first)</button>
+        <button class="vitra-btn vitra-btn-secondary" id="exportBrave">Brave (close first)</button>
+        <button class="vitra-btn vitra-btn-secondary" id="exportChrome">Chrome (close first)</button>
+        <button class="vitra-btn vitra-btn-ghost" id="uploadCookieFile">Upload cookies.txt</button>
+      </div>
+      <div style="font-size:.7rem;color:var(--vitra-color-muted,#888);margin-top:10px;text-align:center">Chromium browsers must be fully closed before export.</div>`;
+    document.body.appendChild(menu);
+    document.addEventListener('click', function outside(e) {
+      if (!menu.contains(e.target) && e.target !== COOKIE_BADGE) { menu.remove(); document.removeEventListener('click', outside); }
+    }, true);
+    const doExport = (browser) => {
+      menu.remove();
+      COOKIE_BADGE.textContent = '...';
+      COOKIE_BADGE.style.pointerEvents = 'none';
+      fetch('/api/cookies/export', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({browser}) })
+        .then(r => r.json())
+        .then(d => {
+          if (d.ok) { COOKIE_BADGE.classList.add('loaded'); COOKIE_BADGE.textContent = browser; COOKIE_BADGE.title = 'Cookies from ' + browser; toast('Cookies loaded from ' + browser); }
+          else { toast('Failed: ' + (d.reason || 'unknown error')); COOKIE_BADGE.textContent = 'bot'; }
+        })
+        .catch(() => { toast('Cookie export failed'); COOKIE_BADGE.textContent = 'bot'; })
+        .finally(() => { COOKIE_BADGE.style.pointerEvents = ''; });
+    };
+    document.getElementById('exportFirefox').onclick = () => doExport('firefox');
+    document.getElementById('exportEdge').onclick = () => doExport('edge');
+    document.getElementById('exportBrave').onclick = () => doExport('brave');
+    document.getElementById('exportChrome').onclick = () => doExport('chrome');
+    document.getElementById('uploadCookieFile').onclick = () => { menu.remove(); COOKIE_INPUT.click(); };
+  }
+  COOKIE_INPUT.addEventListener('change', onCookieFile);
+
+  function onCookieFile() {
+    const file = COOKIE_INPUT.files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    fetch('/api/cookies', { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(d => { if (d.ok) { COOKIE_BADGE.classList.add('loaded'); COOKIE_BADGE.textContent = 'cookies'; toast('Cookies loaded'); } })
+      .catch(() => toast('Cookie upload failed'));
+  }
+
+  function buildQualityChips(qualities, hasAudio) {
+    QUALITY_CHIPS.innerHTML = '';
+    selectedQuality = 'Best';
+    const labels = qualities.length ? ['Best', ...qualities] : ['Best', '1080p', '720p', '480p', '360p'];
+    labels.forEach((q, i) => {
+      const chip = document.createElement('span');
+      chip.className = 'q-chip' + (i === 0 ? ' active' : '');
+      chip.textContent = q;
+      chip.onclick = () => {
+        QUALITY_CHIPS.querySelectorAll('.q-chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        selectedQuality = q;
+      };
+      QUALITY_CHIPS.appendChild(chip);
+    });
+    QUALITY_BAR.style.display = 'flex';
+  }
+
+  function checkCookies() {
+    fetch('/api/cookies/status')
+      .then(r => r.json())
+      .then(d => {
+        if (d.loaded) {
+          COOKIE_BADGE.classList.add('loaded');
+          COOKIE_BADGE.textContent = d.method || 'cookies';
+          COOKIE_BADGE.title = d.method === 'uploaded' ? 'Cookies file loaded' : 'Cookies from ' + d.method;
+        } else {
+          COOKIE_BADGE.title = 'No cookies. Click to upload cookies.txt. YouTube bot detection may fail.';
+        }
+      })
+      .catch(() => {});
+  }
+  checkCookies();
+
+  function toast(msg) {
+    TOAST.textContent = msg; TOAST.classList.add('show');
+    setTimeout(() => TOAST.classList.remove('show'), 2500);
+  }
+
+  function showError(msg, details) {
+    lastError = details || msg;
+    ERROR_TEXT.textContent = msg;
+    ERROR_MSG.classList.add('visible');
+    DETAILS_BTN.style.display = details ? 'inline' : 'none';
+  }
+
+  function hideError() {
+    ERROR_MSG.classList.remove('visible');
+    DETAILS_BTN.style.display = 'none';
+    lastError = null;
+  }
+
+  function showDetails() {
+    if (!lastError) return;
+    const w = window.open('', '_blank', 'width=640,height=480');
+    if (!w) { alert(lastError); return; }
+    w.document.write(`<pre style="background:#111;color:#0f0;padding:20px;font:13px/1.5 monospace;white-space:pre-wrap">${escHtml(lastError)}</pre>`);
+    w.document.close();
+  }
+
+  function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function setAnalyzing(busy) {
+    ANALYZE_BTN.disabled = busy;
+    ANALYZE_BTN.textContent = busy ? 'Analyzing...' : 'Analyze';
+    if (busy) STATUS_TEXT.textContent = 'Fetching video info...';
+  }
+
+  function setDownloading(busy) {
+    downloading = busy;
+    fmtChips.forEach(c => { c.disabled = busy || !videoInfo; });
+    DOWNLOAD_BTN.disabled = busy || !videoInfo;
+    ANALYZE_BTN.disabled = busy;
+    CANCEL_BTN.disabled = !busy;
+    QUALITY_CHIPS.querySelectorAll('.q-chip').forEach(c => c.style.pointerEvents = busy ? 'none' : '');
+  }
+
+  function updateProgress(pct, speed, eta, status) {
+    BAR_FILL.style.width = pct + '%';
+    PCT_TEXT.textContent = pct > 0 ? Math.round(pct) + '%' : '';
+    STATUS_TEXT.textContent = status || '';
+    const spd = fmtSpeed(speed);
+    const et = fmtEta(eta);
+    SPEED_TEXT.textContent = [spd, et].filter(Boolean).join('  ');
+  }
+
+  function fmtSpeed(s) { if (!s || s <= 0) return ''; if (s > 1048576) return (s/1048576).toFixed(1)+' MB/s'; if (s > 1024) return Math.round(s/1024)+' KB/s'; return Math.round(s)+' B/s'; }
+  function fmtEta(e) { if (!e || e <= 0) return ''; if (e > 3600) return Math.floor(e/3600)+'h '+Math.floor((e%3600)/60)+'m'; if (e > 60) return Math.floor(e/60)+'m '+(e%60)+'s'; return Math.round(e)+'s'; }
+  function fmtCount(n) { if (!n) return ''; if (n >= 1000000) return (n/1000000).toFixed(1)+'M'; if (n >= 1000) return Math.round(n/1000)+'K'; return String(n); }
+
+  function onAnalyze() {
+    const url = URL_INPUT.value.trim();
+    if (!url) return;
+    hideError();
+    currentUrl = url; videoInfo = null;
+    INFO_CARD.classList.remove('visible');
+    fmtChips.forEach(c => { c.disabled = true; }); DOWNLOAD_BTN.disabled = true;
+    PROGRESS_CARD.classList.remove('visible');
+    setAnalyzing(true);
+
+    fetch('/api/analyze', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url}),
+    })
+    .then(r => r.json())
+    .then(data => {
+      setAnalyzing(false);
+      if (data.error) { showError(data.error, data.playlist ? 'Paste a single video URL, not a playlist.' : null); return; }
+      videoInfo = data;
+      TITLE_TEXT.textContent = data.title;
+      CHANNEL_TEXT.textContent = data.channel;
+      const parts = [];
+      if (data.duration) parts.push(data.duration);
+      if (data.views) parts.push(fmtCount(data.views) + ' views');
+      if (data.likes) parts.push(fmtCount(data.likes) + ' likes');
+      META_TEXT.textContent = parts.join('  |  ');
+      INFO_CARD.classList.add('visible');
+      fmtChips.forEach(c => { c.disabled = false; }); DOWNLOAD_BTN.disabled = false;
+      STATUS_TEXT.textContent = 'Ready to download';
+      if (data.thumbnail) { THUMB_IMG.src = data.thumbnail; THUMB_IMG.style.display = 'block'; THUMB_PLACEHOLDER.style.display = 'none'; }
+      else { THUMB_IMG.style.display = 'none'; THUMB_PLACEHOLDER.style.display = 'flex'; }
+      buildQualityChips(data.qualities || [], data.has_audio !== false);
+    })
+    .catch(err => { setAnalyzing(false); showError('Network error: ' + err.message); });
+  }
+
+  function startDownload(fmt) {
+    if (!videoInfo || !currentUrl || downloading) return;
+    hideError();
+    PROGRESS_CARD.classList.add('visible');
+    setDownloading(true);
+    updateProgress(0, 0, 0, 'Starting...');
+    const quality = fmt === 'mp3' ? 'Best' : selectedQuality;
+
+    fetch('/api/download', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url: currentUrl, format: fmt, quality}),
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { setDownloading(false); showError(data.error); PROGRESS_CARD.classList.remove('visible'); return; }
+      taskId = data.task_id; pollProgress(taskId, fmt);
+    })
+    .catch(err => { setDownloading(false); showError('Network error: ' + err.message); PROGRESS_CARD.classList.remove('visible'); });
+  }
+
+  function pollProgress(id, fmt) {
+    if (pollTimer) clearTimeout(pollTimer);
+    fetch('/api/progress/' + id)
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { setDownloading(false); showError(data.error); PROGRESS_CARD.classList.remove('visible'); return; }
+      updateProgress(data.percent, data.speed, data.eta, data.status);
+      if (data.done) {
+        if (data.cancelled) { setDownloading(false); STATUS_TEXT.textContent = 'Cancelled'; PROGRESS_CARD.classList.remove('visible'); BAR_FILL.style.width = '0%'; PCT_TEXT.textContent = ''; SPEED_TEXT.textContent = ''; }
+        else if (data.error) { setDownloading(false); showError(data.error, 'Task: ' + id + '\nError: ' + data.error); PROGRESS_CARD.classList.remove('visible'); }
+        else if (data.file_url) { setDownloading(false); STATUS_TEXT.textContent = 'Download complete!'; SPEED_TEXT.textContent = 'Done'; PROGRESS_CARD.classList.remove('visible'); toast('Download complete!'); const a = document.createElement('a'); a.href = data.file_url; a.download = data.filename || 'video'; document.body.appendChild(a); a.click(); document.body.removeChild(a); }
+        return;
+      }
+      pollTimer = setTimeout(() => pollProgress(id, fmt), 500);
+    })
+    .catch(() => { pollTimer = setTimeout(() => pollProgress(id, fmt), 1000); });
+  }
+
+  function onCancel() {
+    if (!taskId) return;
+    fetch('/api/cancel/' + taskId, {method: 'POST'}).then(() => STATUS_TEXT.textContent = 'Cancelling...').catch(() => {});
+  }
+});
+</script>
+</body>
+</html>
