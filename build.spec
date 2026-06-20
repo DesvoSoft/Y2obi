@@ -1,15 +1,26 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
 
+# pywebview helper DLLs / data — collected automatically via its hook,
+# but we also bundle the desktop UI files explicitly.
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[
+        # Desktop HTML + Vitra CSS/JS assets
+        ('desktop', 'desktop'),
+    ],
     hiddenimports=[
-        'customtkinter',
-        'PIL',
-        'PIL._tkinter_finder',
+        'webview',
+        'webview.platforms.winforms',
+        'clr',
+        'flask',
+        'flask.templating',
+        'jinja2',
+        'werkzeug',
+        'werkzeug.serving',
+        'werkzeug.routing',
         'yt_dlp',
         'yt_dlp.extractor',
         'yt_dlp.downloader',
@@ -19,6 +30,7 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
+        'customtkinter',
         'PyQt5', 'PyQt6', 'PySide2', 'PySide6',
         'matplotlib', 'scipy', 'numpy',
         'tkinter.test',
@@ -38,7 +50,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='uTubby',
+    name='Y2obi',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
