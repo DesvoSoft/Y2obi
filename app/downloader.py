@@ -161,16 +161,19 @@ class Downloader:
 
     def get_info(self, url):
         has_cookies = bool(self.cookies and os.path.exists(self.cookies))
+        # web client returns full DASH format list when cookies present
+        # mweb fallback for no-cookie case (less bot-aggressive but limited formats)
+        client = 'web' if has_cookies else 'mweb'
         opts = {
             'quiet': True,
             'no_warnings': True,
             'socket_timeout': 30,
             'extract_flat': False,
             'playlist_items': '1',
-            'extractor_args': {'youtube': {'player_client': ['mweb']}},
+            'extractor_args': {'youtube': {'player_client': [client, 'android_vr']}},
         }
         self._apply_cookies_file_only(opts)
-        print(f"[Y2obi] get_info cookies={self.cookies} exists={has_cookies}", flush=True)
+        print(f"[Y2obi] get_info cookies_exist={has_cookies} client={client}", flush=True)
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
