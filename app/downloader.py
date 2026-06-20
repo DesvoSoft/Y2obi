@@ -3,13 +3,13 @@ import os
 import traceback
 
 QUALITY_MAP = {
-    "Best":  "bestvideo+bestaudio/best",
-    "2160p": "bestvideo[height<=2160]+bestaudio/bestvideo[height<=2160]/best",
-    "1440p": "bestvideo[height<=1440]+bestaudio/bestvideo[height<=1440]/best",
-    "1080p": "bestvideo[height<=1080]+bestaudio/bestvideo[height<=1080]/best",
-    "720p":  "bestvideo[height<=720]+bestaudio/bestvideo[height<=720]/best",
-    "480p":  "bestvideo[height<=480]+bestaudio/bestvideo[height<=480]/best",
-    "360p":  "bestvideo[height<=360]+bestaudio/bestvideo[height<=360]/18",
+    "Best":  (None, None),
+    "2160p": (2160, None),
+    "1440p": (1440, None),
+    "1080p": (1080, None),
+    "720p":  (720,  None),
+    "480p":  (480,  None),
+    "360p":  (360,  None),
 }
 
 QUALITY_MAP_WEBM = {
@@ -23,7 +23,7 @@ QUALITY_MAP_WEBM = {
 }
 
 # Audio format: m4a DASH preferred, fallback to any audio, last resort muxed 360p (format 18 = no DASH/no PO token)
-AUDIO_FORMAT = "bestaudio[ext=m4a]/bestaudio/18"
+AUDIO_FORMAT = "bestaudio/best"
 
 
 class DownloadError(Exception):
@@ -155,15 +155,18 @@ class Downloader:
             opts["cookiefile"] = self.cookies
 
     def get_info(self, url):
+        has_cookies = bool(self.cookies and os.path.exists(self.cookies))
+        clients = ['web', 'android_vr'] if has_cookies else ['android_vr', 'web']
         opts = {
             'quiet': True,
             'no_warnings': True,
             'socket_timeout': 30,
             'extract_flat': False,
             'playlist_items': '1',
-            'extractor_args': {'youtube': {'player_client': ['android_vr']}},
+            'extractor_args': {'youtube': {'player_client': clients}},
         }
         self._apply_cookies_file_only(opts)
+        print(f"[Y2obi] get_info cookies={self.cookies} exists={has_cookies} clients={clients}", flush=True)
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -199,6 +202,8 @@ class Downloader:
         return loc
 
     def _base_opts(self, template):
+        has_cookies = bool(self.cookies and os.path.exists(self.cookies))
+        clients = ['web', 'android_vr'] if has_cookies else ['android_vr', 'web']
         opts = {
             'outtmpl': template,
             'ffmpeg_location': self._ffmpeg_dir(),
@@ -207,10 +212,10 @@ class Downloader:
             'socket_timeout': 30,
             'progress_hooks': [self._hook],
             'postprocessor_hooks': [self._pp_hook],
-            # android_vr: only client that bypasses SABR/PO token for DASH audio without cookies
-            'extractor_args': {'youtube': {'player_client': ['android_vr']}},
+            'extractor_args': {'youtube': {'player_client': clients}},
         }
         self._apply_cookies(opts)
+        print(f"[Y2obi] download cookies={self.cookies} exists={has_cookies} clients={clients}", flush=True)
         return opts
 
     def _resolve_path(self, info, ydl, template):
@@ -240,10 +245,12 @@ class Downloader:
     def download_mp4(self, url, output_dir, quality="Best"):
         qlabel = f" [{quality}]" if quality != "Best" else ""
         template = os.path.join(output_dir, f"%(title)s{qlabel}.%(ext)s")
-        fmt = QUALITY_MAP.get(quality, QUALITY_MAP["Best"])
+        max_h, _ = QUALITY_MAP.get(quality, (None, None))
         opts = self._base_opts(template)
+        fmt_sort = [f"height:{max_h}", "ext", "vcodec", "acodec"] if max_h else ["res", "ext", "vcodec", "acodec"]
         opts.update({
-            'format': fmt,
+            'format': f"bestvideo[height<={max_h}]+bestaudio/best[height<={max_h}]" if max_h else "bestvideo+bestaudio/best",
+            'format_sort': fmt_sort,
             'merge_output_format': 'mp4',
         })
         self._cancel = False
