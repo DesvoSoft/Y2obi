@@ -72,14 +72,19 @@ def _detect_browser():
 
 
 def _is_browser_running(browser):
+    if os.name != "nt":
+        return False  # Linux/Render: no desktop browsers
     import subprocess
     proc_names = {"edge": "msedge.exe", "brave": "brave.exe", "chrome": "chrome.exe", "chromium": "chromium.exe"}
     name = proc_names.get(browser)
     if not name:
         return False
-    result = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {name}", "/NH"],
-                            capture_output=True, text=True, timeout=5)
-    return name.lower() in result.stdout.lower()
+    try:
+        result = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {name}", "/NH"],
+                                capture_output=True, text=True, timeout=5)
+        return name.lower() in result.stdout.lower()
+    except FileNotFoundError:
+        return False
 
 
 def export_cookies_from_browser(browser, dest_path):
