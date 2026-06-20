@@ -3,13 +3,13 @@ import os
 import traceback
 
 QUALITY_MAP = {
-    "Best":  "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
-    "2160p": "bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best",
-    "1440p": "bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1440]+bestaudio/best",
-    "1080p": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best",
-    "720p":  "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best",
-    "480p":  "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best",
-    "360p":  "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best",
+    "Best":  "bestvideo+bestaudio/best",
+    "2160p": "bestvideo[height<=2160]+bestaudio/bestvideo[height<=2160]/best",
+    "1440p": "bestvideo[height<=1440]+bestaudio/bestvideo[height<=1440]/best",
+    "1080p": "bestvideo[height<=1080]+bestaudio/bestvideo[height<=1080]/best",
+    "720p":  "bestvideo[height<=720]+bestaudio/bestvideo[height<=720]/best",
+    "480p":  "bestvideo[height<=480]+bestaudio/bestvideo[height<=480]/best",
+    "360p":  "bestvideo[height<=360]+bestaudio/bestvideo[height<=360]/18",
 }
 
 QUALITY_MAP_WEBM = {
@@ -155,13 +155,13 @@ class Downloader:
             opts["cookiefile"] = self.cookies
 
     def get_info(self, url):
-        """Fetch video metadata. No extractor_args override — use yt-dlp defaults for full format list."""
         opts = {
             'quiet': True,
             'no_warnings': True,
             'socket_timeout': 30,
             'extract_flat': False,
             'playlist_items': '1',
+            'extractor_args': {'youtube': {'player_client': ['android_vr']}},
         }
         self._apply_cookies_file_only(opts)
         try:
