@@ -1,30 +1,55 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import webview
 
-# pywebview helper DLLs / data — collected automatically via its hook,
-# but we also bundle the desktop UI files explicitly.
+# Path to pywebview package (for collecting DLLs / data files)
+webview_pkg = os.path.dirname(webview.__file__)
+
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
     datas=[
-        # Desktop HTML + Vitra CSS/JS assets
+        # Desktop HTML + Vitra CSS/JS
         ('desktop', 'desktop'),
+        # pywebview ships WebView2Loader.dll and Microsoft.Web.WebView2.* managed DLLs
+        (os.path.join(webview_pkg, 'lib'), 'webview/lib'),
     ],
     hiddenimports=[
+        # pywebview Windows backend
         'webview',
+        'webview.platforms.edgechromium',
         'webview.platforms.winforms',
+        'webview.platforms.mshtml',
+        'webview.platforms.win32',
+        'webview.dom',
+        'webview.models',
+        'webview.util',
+        'webview.js',
+        # pythonnet / CLR
         'clr',
+        'clr_loader',
+        'pythonnet',
+        # Flask / Werkzeug
         'flask',
         'flask.templating',
         'jinja2',
+        'jinja2.ext',
         'werkzeug',
         'werkzeug.serving',
         'werkzeug.routing',
+        'werkzeug.exceptions',
+        'werkzeug.middleware',
+        'werkzeug.middleware.shared_data',
+        # yt-dlp
         'yt_dlp',
         'yt_dlp.extractor',
         'yt_dlp.downloader',
         'yt_dlp.postprocessor',
+        'yt_dlp.networking',
+        # misc
+        'PIL',
+        'PIL._tkinter_finder',
     ],
     hookspath=[],
     hooksconfig={},
@@ -54,8 +79,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    upx_exclude=[],
+    upx=False,
     runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
@@ -63,4 +87,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=None,
 )
