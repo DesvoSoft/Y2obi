@@ -4,12 +4,9 @@ services:
     runtime: python
     buildCommand: >-
       pip install -r requirements-web.txt &&
-      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash &&
-      export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh" &&
-      nvm install 20 &&
-      mkdir -p /opt/bgutil &&
-      git clone --depth 1 --branch v1.3.1 https://github.com/LuanRT/bgutil-ytdlp-pot-provider /opt/bgutil &&
-      cd /opt/bgutil/server && npm ci && npx tsc
+      mkdir -p $HOME/bgutil &&
+      git clone --depth 1 --branch v1.3.1 https://github.com/LuanRT/bgutil-ytdlp-pot-provider $HOME/bgutil &&
+      cd $HOME/bgutil/server && npm ci && npx tsc
     startCommand: gunicorn web.app:app --workers 1 --timeout 300 --bind 0.0.0.0:$PORT
     envVars:
       - key: SECRET_KEY
@@ -18,5 +15,3 @@ services:
         sync: false
       - key: DOWNLOAD_DIR
         value: /tmp/y2obi-web
-      - key: BGUTIL_SERVER_HOME
-        value: /opt/bgutil/server

@@ -33,7 +33,8 @@ def _start_bgutil():
     if not node:
         print("[Y2obi] Node.js not found — bgutil disabled", flush=True)
         return
-    server_home = os.environ.get("BGUTIL_SERVER_HOME", "/opt/bgutil/server")
+    server_home = os.environ.get("BGUTIL_SERVER_HOME",
+                                 os.path.join(os.path.expanduser("~"), "bgutil", "server"))
     main_js = os.path.join(server_home, "build", "main.js")
     if not os.path.exists(main_js):
         print(f"[Y2obi] bgutil main.js not found at {main_js} — bgutil disabled", flush=True)
