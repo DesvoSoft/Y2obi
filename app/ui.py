@@ -94,9 +94,10 @@ class App(ctk.CTk):
         frame.grid(row=0, column=0, padx=PADX, pady=(PADY, 0), sticky="ew")
         frame.grid_columnconfigure(0, weight=1)
 
-        self.url_entry = ctk.CTkEntry(frame, placeholder_text="Paste YouTube URL here...", font=FONT, height=40)
+        self.url_entry = ctk.CTkEntry(frame, placeholder_text="Paste a YouTube URL...", font=FONT, height=40)
         self.url_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         self.url_entry.bind("<Return>", lambda e: self.on_analyze())
+        self.url_entry.bind("<<Paste>>", self._on_paste)
 
         self.analyze_btn = ctk.CTkButton(frame, text="Analyze", font=FONT, height=40, width=110,
                                          command=self.on_analyze)
@@ -139,12 +140,13 @@ class App(ctk.CTk):
         frame = ctk.CTkFrame(self, fg_color="transparent")
         frame.grid(row=2, column=0, padx=PADX, pady=(0, PADY), sticky="ew")
         frame.grid_columnconfigure((0, 1), weight=1)
+        self.action_frame = frame
 
-        self.mp4_btn = ctk.CTkButton(frame, text="Video HD", font=FONT, height=42,
+        self.mp4_btn = ctk.CTkButton(frame, text="Download Video", font=FONT, height=42,
                                      command=lambda: self._start_download("mp4"))
         self.mp4_btn.grid(row=0, column=0, padx=(0, 6), sticky="ew")
 
-        self.mp3_btn = ctk.CTkButton(frame, text="MP3 Audio", font=FONT, height=42,
+        self.mp3_btn = ctk.CTkButton(frame, text="Download MP3", font=FONT, height=42,
                                      command=lambda: self._start_download("mp3"))
         self.mp3_btn.grid(row=0, column=1, padx=(6, 6), sticky="ew")
 
@@ -152,6 +154,7 @@ class App(ctk.CTk):
                                         fg_color="#5a2d2d", hover_color="#7a3d3d",
                                         command=self._cancel_download)
         self.cancel_btn.grid(row=0, column=2, padx=(6, 0))
+        frame.grid_remove()
 
     def _build_progress_panel(self):
         frame = ctk.CTkFrame(self)
@@ -217,6 +220,9 @@ class App(ctk.CTk):
         self.clipboard_append(text)
         self.status_label.configure(text="Copied to clipboard")
 
+    def _on_paste(self, event=None):
+        self.after(50, self.on_analyze)
+
     def on_analyze(self):
         url = self.url_entry.get().strip()
         if not url:
@@ -270,6 +276,7 @@ class App(ctk.CTk):
             threading.Thread(target=self._load_thumb, args=(thumb_url,), daemon=True).start()
 
         self.info_frame.grid()
+        self.action_frame.grid()
         self._update_btn_states()
         self._set_analyzing(False)
         self.status_label.configure(text="Ready to download")
@@ -291,6 +298,7 @@ class App(ctk.CTk):
         self._set_analyzing(False)
         self.video_info = None
         self.info_frame.grid_remove()
+        self.action_frame.grid_remove()
         self.status_label.configure(text=f"Error: {msg}")
         self.thumb_label.configure(image="", text="")
         if self._last_error_details:
