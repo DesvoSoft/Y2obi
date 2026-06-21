@@ -2,8 +2,14 @@ services:
   - type: web
     name: y2obi
     runtime: python
-    buildCommand: pip install -r requirements-web.txt
-    startCommand: gunicorn web.app:app --workers 1 --timeout 300 --bind 0.0.0.0:$PORT --preload
+    buildCommand: |
+      pip install -r requirements-web.txt &&
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - &&
+      apt-get install -y nodejs &&
+      mkdir -p /opt/bgutil &&
+      git clone --depth 1 --branch v1.3.1 https://github.com/LuanRT/bgutil-ytdlp-pot-provider /opt/bgutil &&
+      cd /opt/bgutil/server && npm ci && npx tsc
+    startCommand: gunicorn web.app:app --workers 1 --timeout 300 --bind 0.0.0.0:$PORT
     envVars:
       - key: SECRET_KEY
         generateValue: true
@@ -11,4 +17,5 @@ services:
         sync: false
       - key: DOWNLOAD_DIR
         value: /tmp/y2obi-web
-
+      - key: BGUTIL_SERVER_HOME
+        value: /opt/bgutil/server
