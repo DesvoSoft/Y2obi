@@ -12,7 +12,7 @@ from app.downloader import Downloader, DownloadError, PlaylistError, export_cook
 _lock = threading.Lock()
 tasks = {}
 
-DOWNLOAD_DIR = os.path.join(os.path.expanduser("~"), "Videos", "Y2obi")
+DOWNLOAD_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "Y2obi")
 COOKIES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies", "cookies.txt")
 
 app = Flask(__name__, static_folder=None)

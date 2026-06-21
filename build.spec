@@ -10,7 +10,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        # Desktop HTML + Vitra CSS/JS
+        # Desktop HTML + Vitra CSS/JS + icons
         ('desktop', 'desktop'),
         # pywebview ships WebView2Loader.dll and Microsoft.Web.WebView2.* managed DLLs
         (os.path.join(webview_pkg, 'lib'), 'webview/lib'),
@@ -87,5 +87,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon='desktop/static/icon.ico',
 )
