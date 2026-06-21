@@ -130,6 +130,8 @@ def _parse_formats(info):
         lbl = label_map.get(h, f"{h}p")
         if lbl not in quality_labels:
             quality_labels.append(lbl)
+    if not quality_labels:
+        quality_labels = ["Best"]
     return quality_labels, has_audio_only
 
 
@@ -176,13 +178,21 @@ class Downloader:
         }
         self._apply_cookies_file_only(opts)
         print(f"[Y2obi] get_info cookies_exist={has_cookies}", flush=True)
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-        except yt_dlp.utils.DownloadError as e:
-            raise DownloadError(f"YouTube error: {e}") from e
-        except Exception as e:
-            raise DownloadError(f"Unexpected error: {e}\n\n{traceback.format_exc()}") from e
+        info = None
+        last_err = None
+        for clients in (['android_vr', 'mweb'], ['tv_embedded'], ['web']):
+            opts['extractor_args'] = {'youtube': {'player_client': clients}}
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                break
+            except yt_dlp.utils.DownloadError as e:
+                last_err = e
+                continue
+            except Exception as e:
+                raise DownloadError(f"Unexpected error: {e}\n\n{traceback.format_exc()}") from e
+        if info is None:
+            raise DownloadError(f"YouTube error: {last_err}") from last_err
 
         if info and info.get('_type') == 'playlist':
             title = info.get('title', 'Untitled')
