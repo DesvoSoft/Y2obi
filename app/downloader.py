@@ -2,6 +2,11 @@ import yt_dlp
 import os
 import traceback
 
+try:
+    import bgutil_ytdlp_pot_provider  # registers itself as yt-dlp POT provider
+except ImportError:
+    pass
+
 QUALITY_MAP = {
     "Best":  (None, None),
     "2160p": (2160, None),
