@@ -169,7 +169,7 @@ class Downloader:
             'playlist_items': '1',
             # android_vr bypasses n-challenge and bot check without POT or JS runtime
             # mweb as fallback: no POT needed, works on server environments
-            'extractor_args': {'youtube': {'player_client': ['android_vr', 'mweb']}},
+            'extractor_args': {'youtube': {'player_client': ['android_vr', 'android_embedded']}},
         }
         self._apply_cookies_file_only(opts)
         print(f"[Y2obi] get_info cookies_exist={has_cookies}", flush=True)
@@ -209,7 +209,7 @@ class Downloader:
 
     def _base_opts(self, template):
         has_cookies = bool(self.cookies and os.path.exists(self.cookies))
-        clients = ['android_vr', 'mweb']  # bypass n-challenge and bot check without POT
+        clients = ['android_vr', 'android_embedded']  # bypass n-challenge without POT
         opts = {
             'outtmpl': template,
             'ffmpeg_location': self._ffmpeg_dir(),
