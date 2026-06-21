@@ -19,8 +19,21 @@
   .vitra-gradient-bg { position: fixed; inset: 0; z-index: 0; opacity: .5; }
   .vitra-glow-orb { z-index: 0; }
 
+  @keyframes particle-drift {
+    0%   { transform: translate(0,0) scale(1); opacity: .5; }
+    25%  { transform: translate(30px,-40px) scale(1.15); opacity: .9; }
+    50%  { transform: translate(-20px,-70px) scale(0.9); opacity: .6; }
+    75%  { transform: translate(-40px,-30px) scale(1.1); opacity: .85; }
+    100% { transform: translate(0,0) scale(1); opacity: .5; }
+  }
+  .app-wrap .vitra-particle {
+    animation: particle-drift var(--vitra-particle-speed) ease-in-out infinite;
+    animation-delay: calc(var(--i, 0) * -0.3s);
+  }
+
   .app-wrap {
     position: relative; z-index: 1; width: 680px; max-width: 96vw;
+    overflow: hidden;
     background: rgba(10,10,18,.35); border-radius: 20px;
     padding: 20px 22px 14px;
     -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
@@ -282,6 +295,11 @@ document.addEventListener('DOMContentLoaded', () => {
   Vitra.particles.spawn(30, { ..._pc, color: '#7c4dff', size: 4 });
   Vitra.particles.spawn(20, { ..._pc, color: '#ff6b9d', size: 3 });
   Vitra.particles.spawn(15, { ..._pc, color: '#ffffff', size: 2 });
+  // randomize duration and delay per particle for organic feel
+  document.querySelectorAll('.app-wrap .vitra-particle').forEach((p, i) => {
+    p.style.animationDuration = (5 + Math.random() * 8) + 's';
+    p.style.animationDelay   = -(Math.random() * 10) + 's';
+  });
 
   const $ = id => document.getElementById(id);
   const URL_INPUT    = $('urlInput');
