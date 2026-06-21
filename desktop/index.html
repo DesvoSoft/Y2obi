@@ -277,9 +277,10 @@
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   Vitra.theme.init({ defaultTheme: 'dark', persist: true });
-  Vitra.particles.spawn(18, { color: 'var(--vitra-color-accent)', size: 4 });
-  Vitra.particles.spawn(14, { color: '#7c4dff', size: 3 });
-  Vitra.particles.spawn(10, { color: '#ff6b9d', size: 2 });
+  Vitra.particles.spawn(40, { color: 'var(--vitra-color-accent)', size: 5 });
+  Vitra.particles.spawn(30, { color: '#7c4dff', size: 4 });
+  Vitra.particles.spawn(20, { color: '#ff6b9d', size: 3 });
+  Vitra.particles.spawn(15, { color: '#ffffff', size: 2 });
 
   const $ = id => document.getElementById(id);
   const URL_INPUT    = $('urlInput');
