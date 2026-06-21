@@ -220,7 +220,7 @@ class Downloader:
             'postprocessor_hooks': [self._pp_hook],
             'extractor_args': {'youtube': {'player_client': clients}},
         }
-        self._apply_cookies(opts)
+        self._apply_cookies_file_only(opts)
         print(f"[Y2obi] download cookies={self.cookies} exists={has_cookies} clients={clients}", flush=True)
         return opts
 
