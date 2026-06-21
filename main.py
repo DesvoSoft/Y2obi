@@ -3,10 +3,41 @@ import os
 import tkinter as tk
 from tkinter import messagebox
 import threading
+import urllib.request
+import subprocess
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 DESKTOP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "desktop")
+WEBVIEW2_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+
+
+def _webview2_installed():
+    try:
+        import winreg
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            for path in (
+                r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+                r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+            ):
+                try:
+                    with winreg.OpenKey(hive, path):
+                        return True
+                except OSError:
+                    pass
+    except Exception:
+        pass
+    return False
+
+
+def _install_webview2(progress_cb):
+    progress_cb("Downloading WebView2 runtime...")
+    tmp = tempfile.mktemp(suffix=".exe")
+    urllib.request.urlretrieve(WEBVIEW2_URL, tmp)
+    progress_cb("Installing WebView2 runtime...")
+    subprocess.run([tmp, "/silent", "/install"], check=True)
+    os.unlink(tmp)
 
 
 class FFmpegSplash:
@@ -59,6 +90,8 @@ def main():
 
     def _check():
         try:
+            if not _webview2_installed():
+                _install_webview2(lambda m: splash.root.after(0, lambda msg=m: splash.update(msg)))
             from app.binaries import ensure_ffmpeg
             path = ensure_ffmpeg(progress_cb=lambda m: splash.root.after(0, lambda msg=m: splash.update(msg)))
             result["path"] = path
