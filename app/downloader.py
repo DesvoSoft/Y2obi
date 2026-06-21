@@ -172,7 +172,7 @@ class Downloader:
             'socket_timeout': 30,
             'extract_flat': False,
             'playlist_items': '1',
-            'extractor_args': {'youtube': {'player_client': ['web']}},
+            'extractor_args': {'youtube': {'player_client': ['android_vr', 'mweb']}},
         }
         self._apply_cookies_file_only(opts)
         print(f"[Y2obi] get_info cookies_exist={has_cookies}", flush=True)
@@ -212,7 +212,7 @@ class Downloader:
 
     def _base_opts(self, template):
         has_cookies = bool(self.cookies and os.path.exists(self.cookies))
-        clients = ['web']  # bgutil provides POT automatically
+        clients = ['android_vr', 'mweb']
         opts = {
             'outtmpl': template,
             'ffmpeg_location': self._ffmpeg_dir(),
