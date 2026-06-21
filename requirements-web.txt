@@ -1,5 +1,0 @@
-yt-dlp>=2025.05.22
-flask>=3.0.0
-pycryptodome>=3.20.0
-gunicorn>=21.2.0
-bgutil-ytdlp-pot-provider>=1.3.1
