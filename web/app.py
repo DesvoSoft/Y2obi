@@ -11,9 +11,25 @@ from app.downloader import Downloader, DownloadError, PlaylistError, export_cook
 from app.binaries import ensure_ffmpeg
 
 # Start bgutil POT provider HTTP server (port 4416) — yt-dlp auto-discovers it
-def _start_bgutil():
-    import subprocess, shutil
+def _find_node():
+    import shutil, glob
     node = shutil.which("node")
+    if node:
+        return node
+    # nvm installs node here when apt is unavailable (e.g. Render free tier)
+    patterns = [
+        os.path.expanduser("~/.nvm/versions/node/*/bin/node"),
+        "/opt/nvm/versions/node/*/bin/node",
+    ]
+    for pattern in patterns:
+        matches = sorted(glob.glob(pattern), reverse=True)
+        if matches:
+            return matches[0]
+    return None
+
+def _start_bgutil():
+    import subprocess
+    node = _find_node()
     if not node:
         print("[Y2obi] Node.js not found — bgutil disabled", flush=True)
         return
