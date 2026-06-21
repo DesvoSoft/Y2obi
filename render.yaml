@@ -5,7 +5,7 @@ services:
     buildCommand: >-
       pip install -r requirements-web.txt &&
       mkdir -p $HOME/bgutil &&
-      git clone --depth 1 --branch v1.3.1 https://github.com/LuanRT/bgutil-ytdlp-pot-provider $HOME/bgutil &&
+      curl -L https://github.com/LuanRT/bgutil-ytdlp-pot-provider/archive/refs/tags/v1.3.1.tar.gz | tar -xz -C $HOME/bgutil --strip-components=1 &&
       cd $HOME/bgutil/server && npm ci && npx tsc
     startCommand: gunicorn web.app:app --workers 1 --timeout 300 --bind 0.0.0.0:$PORT
     envVars:
