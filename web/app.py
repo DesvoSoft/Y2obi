@@ -227,8 +227,6 @@ def start_download():
     task_id = uuid.uuid4().hex[:12]
     cookies = COOKIES_PATH if os.path.exists(COOKIES_PATH) else None
     task_dl = Downloader(ffmpeg_path, cookies=cookies)
-    # Inherit browser detection result from shared dl
-    task_dl._browser = getattr(dl, "_browser", None)
 
     task = {
         "percent": 0, "speed": 0, "eta": 0,
