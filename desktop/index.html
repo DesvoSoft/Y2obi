@@ -200,7 +200,7 @@
   </div>
 
   <div class="url-row">
-    <input id="urlInput" type="text" placeholder="Paste YouTube URL and press Enter..." autofocus>
+    <input id="urlInput" type="text" placeholder="Paste a YouTube URL..." autofocus>
     <button class="vitra-btn vitra-btn-glass analyze-btn" id="analyzeBtn">Analyze</button>
   </div>
 
@@ -261,15 +261,9 @@
       <span id="cookieBadge" class="cookie-badge" title="No cookies loaded">bot</span>
       <input type="file" id="cookieInput" accept=".txt" style="display:none">
       <span class="footer-sep">|</span>
-      <span class="footer-link" id="openFolderLink" title="Open ~/Downloads/Y2obi">Open folder</span>
-      <span class="footer-sep">|</span>
       <a class="footer-link" href="https://github.com/DesvoSoft" target="_blank">DesvoSoft</a>
       <span class="footer-sep">|</span>
       <button id="detailsBtn" class="btn-details">Details</button>
-    </div>
-    <div class="kbd-hint">
-      <span>Enter to analyze</span>
-      <kbd>Ctrl+V</kbd> <kbd>Enter</kbd>
     </div>
   </div>
 
@@ -312,7 +306,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const TOAST        = $('toast');
   const COOKIE_BADGE = $('cookieBadge');
   const COOKIE_INPUT = $('cookieInput');
-  const OPEN_FOLDER  = $('openFolderLink');
 
   let videoInfo = null, currentUrl = null, downloading = false;
   let taskId = null, pollTimer = null, lastError = null, selectedQuality = 'Best';
@@ -341,12 +334,11 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   URL_INPUT.addEventListener('keydown', e => { if (e.key === 'Enter') onAnalyze(); });
+  URL_INPUT.addEventListener('paste', () => setTimeout(onAnalyze, 50));
   ANALYZE_BTN.addEventListener('click', onAnalyze);
   DOWNLOAD_BTN.addEventListener('click', () => startDownload(selectedFormat));
   CANCEL_BTN.addEventListener('click', onCancel);
   DETAILS_BTN.addEventListener('click', showDetails);
-  OPEN_FOLDER.addEventListener('click', () => fetch('/api/open_folder', { method: 'POST' }));
-
   // Cookie badge click → popup menu
   COOKIE_BADGE.addEventListener('click', showCookieMenu);
 
