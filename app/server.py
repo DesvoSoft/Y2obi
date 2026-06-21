@@ -13,7 +13,8 @@ _lock = threading.Lock()
 tasks = {}
 
 DOWNLOAD_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "Y2obi")
-COOKIES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies", "cookies.txt")
+_APP_DATA = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Y2obi")
+COOKIES_PATH = os.path.join(_APP_DATA, "cookies.txt")
 
 app = Flask(__name__, static_folder=None)
 app.secret_key = uuid.uuid4().hex
