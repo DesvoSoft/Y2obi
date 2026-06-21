@@ -218,6 +218,7 @@ class Downloader:
             'ffmpeg_location': self._ffmpeg_dir(),
             'quiet': True,
             'no_warnings': True,
+            'nooverwrites': True,
             'socket_timeout': 30,
             'progress_hooks': [self._hook],
             'postprocessor_hooks': [self._pp_hook],
@@ -338,6 +339,10 @@ class Downloader:
     def _hook(self, d):
         if self._cancel:
             raise yt_dlp.utils.DownloadError("Cancelled")
+        if d['status'] == 'already_downloaded':
+            if self._status_cb:
+                self._status_cb("__already_exists__")
+            return
         if d['status'] == 'downloading':
             total = d.get('total_bytes') or d.get('total_bytes_estimate')
             downloaded = d.get('downloaded_bytes', 0)

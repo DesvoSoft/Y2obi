@@ -277,10 +277,11 @@
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   Vitra.theme.init({ defaultTheme: 'dark', persist: true });
-  Vitra.particles.spawn(40, { color: 'var(--vitra-color-accent)', size: 5 });
-  Vitra.particles.spawn(30, { color: '#7c4dff', size: 4 });
-  Vitra.particles.spawn(20, { color: '#ff6b9d', size: 3 });
-  Vitra.particles.spawn(15, { color: '#ffffff', size: 2 });
+  const _pc = { container: '.app-wrap' };
+  Vitra.particles.spawn(40, { ..._pc, color: 'var(--vitra-color-accent)', size: 5 });
+  Vitra.particles.spawn(30, { ..._pc, color: '#7c4dff', size: 4 });
+  Vitra.particles.spawn(20, { ..._pc, color: '#ff6b9d', size: 3 });
+  Vitra.particles.spawn(15, { ..._pc, color: '#ffffff', size: 2 });
 
   const $ = id => document.getElementById(id);
   const URL_INPUT    = $('urlInput');
@@ -555,14 +556,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.cancelled) {
           setDownloading(false); STATUS_TEXT.textContent = 'Cancelled';
           PROGRESS_CARD.classList.remove('visible'); BAR_FILL.style.width = '0%'; PCT_TEXT.textContent = ''; SPEED_TEXT.textContent = '';
+        } else if (data.already_exists) {
+          setDownloading(false);
+          STATUS_TEXT.textContent = 'Already downloaded — check ~/Downloads/Y2obi/';
+          SPEED_TEXT.textContent = '';
+          toast('File already exists in ~/Downloads/Y2obi/');
         } else if (data.error) {
           setDownloading(false); showError(data.error); PROGRESS_CARD.classList.remove('visible');
         } else {
           setDownloading(false);
           STATUS_TEXT.textContent = 'Saved to ~/Downloads/Y2obi/';
           SPEED_TEXT.textContent = 'Done';
-          toast('Download complete! Saved to ~/Downloads/Y2obi/');
-          fetch('/api/open_folder', { method: 'POST' });
+          toast('Done! Check ~/Downloads/Y2obi/');
         }
         return;
       }

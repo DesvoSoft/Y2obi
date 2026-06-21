@@ -43,7 +43,11 @@ def _status_cb(task_id):
         with _lock:
             s = tasks.get(task_id)
             if s:
-                s["status"] = msg
+                if msg == "__already_exists__":
+                    s.update(status="Already in ~/Downloads/Y2obi/ — skipped", done=True,
+                             percent=100, already_exists=True, _done_at=__import__('time').time())
+                else:
+                    s["status"] = msg
     return cb
 
 
@@ -211,6 +215,7 @@ def progress(task_id):
         "done": task["done"],
         "cancelled": task["cancelled"],
         "error": task.get("error"),
+        "already_exists": task.get("already_exists", False),
     }
     if task["done"] and task.get("path") and not task.get("error") and not task["cancelled"]:
         resp["file_url"] = f"/api/file/{task_id}"
