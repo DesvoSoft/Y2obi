@@ -14,6 +14,8 @@ a = Analysis(
         ('desktop', 'desktop'),
         # pywebview ships WebView2Loader.dll and Microsoft.Web.WebView2.* managed DLLs
         (os.path.join(webview_pkg, 'lib'), 'webview/lib'),
+        # Bundled ffmpeg.exe — no runtime download needed (see app/binaries.py)
+        (os.path.join('core', 'ffmpeg.exe'), 'core'),
     ],
     hiddenimports=[
         # pywebview Windows backend

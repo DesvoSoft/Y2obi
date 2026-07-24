@@ -30,7 +30,7 @@
 - Skips re-downloading files that already exist
 - Cookie support for age-restricted content
 - Glassmorphism UI powered by [Vitra CSS](https://vitracss.com)
-- Single `.exe` — no Python, no Node.js, no setup
+- Single `.exe` — no Python, no FFmpeg, no Node.js, no setup, fully offline after download
 
 ---
 
@@ -51,7 +51,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-FFmpeg downloads automatically on first run.
+FFmpeg downloads automatically on first run (only when running from source).
 
 ## Build `.exe`
 
@@ -60,6 +60,14 @@ pip install pyinstaller
 python -m PyInstaller build.spec
 # Output: dist/Y2obi.exe
 ```
+
+`build.spec` bundles `core/ffmpeg.exe` straight into the executable, so the
+built app needs no runtime download. Run `python main.py` once from source
+first if `core/ffmpeg.exe` doesn't exist yet — it'll be fetched automatically
+before you build.
+
+Releases are also built automatically by [GitHub Actions](.github/workflows/release.yml)
+on every `v*` tag push.
 
 ---
 
@@ -82,7 +90,7 @@ Y2obi/
 ├── app/
 │   ├── downloader.py     # yt-dlp wrapper — video/audio/mp3, cookies, progress hooks
 │   ├── server.py         # Flask app — API routes served to the embedded webview
-│   └── binaries.py       # FFmpeg auto-download (Windows)
+│   └── binaries.py       # FFmpeg resolution — bundled binary, PATH, or download fallback
 ├── desktop/
 │   ├── index.html        # UI — glassmorphism, particles, quality picker
 │   └── static/           # Vitra CSS/JS, icons

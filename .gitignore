@@ -4,24 +4,19 @@ __pycache__/
 *.pyo
 *.pyd
 *.egg-info/
-dist/
 build/
 venv/
 .venv/
 .env
 *.egg
 
-# Desktop binary (auto-downloaded at runtime)
-core/ffmpeg.exe
+# FFmpeg binary (bundled into the exe at build time, see build.spec)
 core/
 
-# Cookies (sensitive — provide via COOKIES_B64 env var on Render)
-web/cookies/cookies.txt
+# Cookies (sensitive, stored per-user in %APPDATA%/Y2obi)
+app/cookies/
 
-# Downloads (ephemeral, never committed)
-web/downloads/
-
-# PyInstaller build artifacts (keep build.spec, ignore output)
+# PyInstaller build output
 dist/
 
 # IDE / OS
@@ -32,3 +27,4 @@ Thumbs.db
 
 # Claude Code
 .claude/settings.local.json
+.serena/

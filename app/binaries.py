@@ -7,6 +7,14 @@ import tempfile
 
 FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
+def _get_bundled_ffmpeg():
+    """ffmpeg.exe shipped inside the PyInstaller onefile payload (extracted to _MEIPASS)."""
+    meipass = getattr(sys, '_MEIPASS', None)
+    if not meipass:
+        return None
+    path = os.path.join(meipass, "core", "ffmpeg.exe")
+    return path if os.path.exists(path) else None
+
 def _get_core_dir():
     if getattr(sys, 'frozen', False):
         base = os.path.dirname(sys.executable)
@@ -47,11 +55,15 @@ def _download_ffmpeg(dest, progress_cb=None):
             os.unlink(tmp_path)
 
 def ensure_ffmpeg(progress_cb=None):
+    bundled = _get_bundled_ffmpeg()
+    if bundled:
+        return bundled
+
     path = shutil.which("ffmpeg")
     if path:
         return path
 
-    # On Linux (Render, PythonAnywhere) ffmpeg should be in PATH; don't attempt download
+    # On Linux, ffmpeg should be in PATH; don't attempt download
     if os.name != "nt":
         return "ffmpeg"
 
