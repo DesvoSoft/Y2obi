@@ -41,8 +41,21 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist\Y2obi.exe -DestinationPath Y2obi-win.zip
 
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Path Y2obi-win.zip -Algorithm SHA256).Hash
+          "SHA256  $hash  Y2obi-win.zip" | Out-File -FilePath checksum.txt -Encoding utf8
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Y2obi-win.zip
+          files: |
+            Y2obi-win.zip
+            checksum.txt
           generate_release_notes: true
+          body: |
+            > **Windows blocked the download or shows a SmartScreen warning?**
+            > That's expected for an unsigned indie app, not a sign of malware — see the
+            > [Download](https://github.com/DesvoSoft/Y2obi#download) section in the README
+            > for why it happens and how to verify/run it safely.

@@ -11,13 +11,31 @@
 
 ## Download
 
-**[→ Latest release: Y2obi v1.0.0](https://github.com/DesvoSoft/Y2obi/releases/latest)**
+**[→ Latest release: Y2obi v1.1.0](https://github.com/DesvoSoft/Y2obi/releases/latest)**
 
-1. Download `Y2obi-v1.0.0.zip`
+1. Download `Y2obi-win.zip`
 2. Extract `Y2obi.exe` anywhere
 3. Run — no installer, no admin rights required
 
 > First launch may install the WebView2 runtime automatically if it's not already on your system.
+
+### "Windows protected your PC" / browser blocked the download?
+
+Y2obi isn't code-signed (a signing certificate costs money we're not putting
+into a free hobby project), so Windows SmartScreen, Defender, or your browser
+may flag the download or show a warning the first time. This is a false
+positive common to small unsigned apps, not malware:
+
+- **Browser deleted/blocked the file**: check the browser's download history,
+  restore/keep it.
+- **SmartScreen popup on launch**: click **More info → Run anyway**.
+- **Want to verify the file is untampered**: each release includes a
+  `checksum.txt`. Compare it against the zip with:
+  ```powershell
+  Get-FileHash Y2obi-win.zip -Algorithm SHA256
+  ```
+  It should match the hash in `checksum.txt` for that release.
+- Prefer to skip all of this? Run from source instead — see below.
 
 ---
 
@@ -28,6 +46,7 @@
 - Quality selector: Best / 2160p / 1440p / 1080p / 720p / 480p / 360p
 - Real-time progress bar with speed and ETA
 - Skips re-downloading files that already exist
+- Pasting a URL with `&list=...` (mix/radio/autoplay links) downloads just that video, not the playlist
 - Cookie support for age-restricted content
 - Glassmorphism UI powered by [Vitra CSS](https://vitracss.com)
 - Single `.exe` — no Python, no FFmpeg, no Node.js, no setup, fully offline after download
@@ -45,6 +64,13 @@ Cookies are stored in `%APPDATA%\Y2obi\cookies.txt` and persist across launches.
 ---
 
 ## Run from Source
+
+**Easiest way (Windows):** double-click `run.bat`. It creates a virtual
+environment, installs dependencies, and launches the app — only needs
+[Python 3.10+](https://python.org) installed first. Safe to double-click
+again later, it reuses the same environment.
+
+Manual way:
 
 ```bash
 pip install -r requirements.txt
@@ -95,7 +121,9 @@ Y2obi/
 │   ├── index.html        # UI — glassmorphism, particles, quality picker
 │   └── static/           # Vitra CSS/JS, icons
 ├── main.py               # Entry point — WebView2 check, FFmpeg, launch
+├── run.bat               # Windows one-click setup + launch (source installs)
 ├── build.spec            # PyInstaller config
+├── version_info.txt      # Exe file/product metadata (embedded in build)
 └── requirements.txt      # Dependencies
 ```
 
