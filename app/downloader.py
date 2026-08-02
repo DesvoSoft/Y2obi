@@ -173,7 +173,7 @@ class Downloader:
             'no_warnings': True,
             'socket_timeout': 30,
             'extract_flat': False,
-            'playlist_items': '1',
+            'noplaylist': True,
             'extractor_args': {'youtube': {'player_client': ['android_vr', 'mweb']}},
         }
         self._apply_cookies_file_only(opts)
@@ -230,6 +230,7 @@ class Downloader:
             'no_warnings': True,
             'nooverwrites': True,
             'socket_timeout': 30,
+            'noplaylist': True,
             'progress_hooks': [self._hook],
             'postprocessor_hooks': [self._pp_hook],
             'extractor_args': {'youtube': {'player_client': clients}},
