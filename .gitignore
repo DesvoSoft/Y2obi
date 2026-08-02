@@ -28,3 +28,4 @@ Thumbs.db
 # Claude Code
 .claude/settings.local.json
 .serena/
+CLAUDE.md
