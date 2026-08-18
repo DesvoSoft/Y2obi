@@ -143,10 +143,15 @@ jobs:
             > warns about any new executable until enough people have run it.
             >
             > If that leaves you uneasy, don't take my word for it: **the whole
-            > source is here to read**, the release is built by a public GitHub
-            > Actions workflow you can inspect, and `checksum.txt` lets you verify
-            > the download is byte-for-byte what CI produced. You can also skip the
-            > exe entirely and [run it from source](https://github.com/DesvoSoft/Y2obi#run-from-source).
+            > source is here to read**, this release was built by a
+            > [public GitHub Actions workflow](https://github.com/DesvoSoft/Y2obi/blob/main/.github/workflows/release.yml)
+            > you can inspect, and `checksum.txt` lets you verify the download is
+            > byte-for-byte what CI produced. You can also skip the exe entirely
+            > and [run it from source](https://github.com/DesvoSoft/Y2obi#run-from-source).
             >
             > See the [Download](https://github.com/DesvoSoft/Y2obi#download)
             > section of the README for how to get past the warning.
+
+            <!-- The generated notes above are a commit list. Write the release
+                 description by hand afterwards: what changed for someone using
+                 the app, not what changed in the tree. -->
