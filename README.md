@@ -11,7 +11,7 @@
 
 ## Download
 
-**[→ Latest release: Y2obi v1.1.0](https://github.com/DesvoSoft/Y2obi/releases/latest)**
+**[→ Latest release](https://github.com/DesvoSoft/Y2obi/releases/latest)**
 
 1. Download `Y2obi-win.zip`
 2. Extract `Y2obi.exe` anywhere

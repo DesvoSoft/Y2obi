@@ -444,6 +444,8 @@
   }
   .model-pct { font-size: 12px; font-weight: 700; color: var(--vitra-color-accent); min-width: 38px; text-align: right; }
   .tag.muted { background: var(--card-bg); color: var(--faint); border-color: var(--card-bd); }
+  .gpu-pick { margin: -2px 0 8px; padding: 0 2px; }
+  .gpu-pick-label { display: block; font-size: 11px; color: var(--faint); margin-bottom: 6px; }
   .model-bar { grid-column: 1 / -1; height: 5px; border-radius: 3px; background: var(--card-bg); overflow: hidden; }
   .model-bar > div { height: 100%; width: 0; background: var(--vitra-color-accent); transition: width .3s; }
 
@@ -689,7 +691,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let modelInfo = {}, allModels = [], modelsDir = '';
   let modelTasks = {};          // model name -> in-flight download task id
   let cookiesLoaded = false, cookieMethod = null;
-  let selectedDevice = 'cpu', gpuBackend = null;
+  let selectedDevice = 'cpu', gpuBackend = null, gpuIndex = 0;
   const fmtChips = [FMT_MP4, FMT_WEBM, FMT_MP3, FMT_TXT];
   const fmtMap = { fmtMp4: 'mp4', fmtWebm: 'webm', fmtMp3: 'mp3', fmtTxt: 'txt' };
 
@@ -913,6 +915,7 @@ document.addEventListener('DOMContentLoaded', () => {
         modelTasks = Object.assign({}, d.downloading || {});
         gpuBackend = d.gpu || null;
         selectedDevice = d.device || 'cpu';
+        gpuIndex = d.gpu_index || 0;
         selectedModel = d.default;
         selectedLang = d.lang || 'auto';
         d.models.forEach(m => { modelInfo[m.name] = m; });
@@ -1305,6 +1308,28 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         host.appendChild(b);
       });
+
+      // With a discrete card and an integrated one, enumeration order decides
+      // which you get — and landing on the integrated GPU is far slower. Only
+      // worth showing when there is actually a choice.
+      const devices = (gpuBackend && gpuBackend.devices) || [];
+      if (selectedDevice === 'gpu' && devices.length > 1) {
+        const wrap = document.createElement('div');
+        wrap.className = 'gpu-pick';
+        wrap.innerHTML = '<span class="gpu-pick-label">Adapter</span>';
+        const set = document.createElement('div');
+        set.className = 'chip-set';
+        set.setAttribute('role', 'radiogroup');
+        set.setAttribute('aria-label', 'GPU adapter');
+        devices.forEach(d => {
+          set.appendChild(makeChip(escHtml(d.name), d.index === gpuIndex, () => {
+            gpuIndex = d.index;
+            saveConfig({gpu_index: d.index});
+          }));
+        });
+        wrap.appendChild(set);
+        host.appendChild(wrap);
+      }
     }
 
     // Downloads use the same task machinery as everything else, so the bar and
