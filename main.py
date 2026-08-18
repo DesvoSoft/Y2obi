@@ -2,6 +2,7 @@ import argparse
 import sys
 import os
 import datetime
+import faulthandler
 import tkinter as tk
 from tkinter import messagebox
 import threading
@@ -9,6 +10,7 @@ import shutil
 import urllib.request
 import subprocess
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -53,6 +55,44 @@ def _install_webview2(progress_cb):
 
 
 VERSION = "1.3.0"
+
+# How long Python may stop making progress before we consider the app wedged.
+# Nothing legitimate blocks this long: the slow work (yt-dlp, ffmpeg, whisper)
+# runs in subprocesses, so Python threads keep ticking throughout.
+STALL_SECONDS = 20
+STALL_LOG = "y2obi-stall.log"
+
+
+def _arm_stall_watchdog():
+    """Record every thread's stack if the process stops responding.
+
+    A watchdog written in Python cannot report a freeze that holds the GIL,
+    because it would be frozen too. faulthandler's timer lives in C and fires
+    regardless, which is the only way to see this kind of hang from the inside.
+
+    The timer is re-armed continuously by a healthy Python thread, so it only
+    ever fires when that thread stops getting scheduled. Costs nothing while the
+    app is well, and writes the one thing worth having when it is not.
+    """
+    path = os.path.join(tempfile.gettempdir(), STALL_LOG)
+    try:
+        handle = open(path, "a", encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    handle.write(chr(10) + "===== watching from " + stamp
+                 + " (a dump appears below only if the app wedges) =====" + chr(10))
+    handle.flush()
+    faulthandler.enable(file=handle)
+
+    def _rearm():
+        while True:
+            faulthandler.dump_traceback_later(STALL_SECONDS, repeat=False,
+                                              file=handle, exit=False)
+            time.sleep(STALL_SECONDS / 4.0)
+
+    threading.Thread(target=_rearm, daemon=True, name="stall-watchdog").start()
+    return path
 
 # Held for the life of the process; releasing it would let a second copy start.
 _instance_mutex = None
@@ -229,6 +269,7 @@ class FFmpegSplash:
 
 def main(argv=None):
     args = _parse_args(argv)
+    _arm_stall_watchdog()
     if args.debug or args.log:
         log_path = args.log or os.path.join(tempfile.gettempdir(), "y2obi-debug.log")
         print(f"[Y2obi] logging to {_start_logging(log_path)}")
