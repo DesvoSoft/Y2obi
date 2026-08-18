@@ -1208,7 +1208,7 @@ document.addEventListener('DOMContentLoaded', () => {
       cookieState.innerHTML = cookiesLoaded
         ? `Connected <span class="tag">${escHtml(cookieMethod || 'on')}</span>`
         : 'Not connected <span class="tag muted">usually not needed</span>';
-      panel.querySelector('#setCookieLoad').textContent = cookiesLoaded ? 'Change' : 'Connect';
+      panel.querySelector('#setCookieLoad').textContent = cookiesLoaded ? 'Change' : 'Sign in';
       panel.querySelector('#setCookieLoad').onclick = () => { close(); showCookieMenu(); };
       const clearBtn = panel.querySelector('#setCookieClear');
       clearBtn.disabled = !cookiesLoaded;
@@ -1570,6 +1570,29 @@ document.addEventListener('DOMContentLoaded', () => {
     const usable = (browsers || []).filter(b => !(b.needs_close && b.running));
     const blocked = (browsers || []).filter(b => b.needs_close && b.running);
 
+    // First, because it is the only route that still works on a current
+    // Chromium: Edge, Chrome and Brave encrypt their cookies with App-Bound
+    // Encryption now, which no outside process can decrypt.
+    const signin = document.createElement('button');
+    signin.type = 'button';
+    signin.className = 'fix-btn';
+    signin.textContent = 'Sign in to YouTube';
+    signin.onclick = () => {
+      ERROR_ACTIONS.querySelectorAll('button').forEach(x => x.disabled = true);
+      signin.textContent = 'Waiting for the sign-in window...';
+      api('/api/cookies/signin', {method: 'POST'})
+        .then(r => r.json())
+        .then(d => {
+          if (!d.ok) { showAuthError(d.reason || 'Sign-in did not complete.', browsers, retry); return; }
+          setCookieLabel('signed in');
+          hideError();
+          toast('Signed in to YouTube');
+          if (retry) retry();
+        })
+        .catch(() => showAuthError('Sign-in did not complete.', browsers, retry));
+    };
+    ERROR_ACTIONS.appendChild(signin);
+
     usable.forEach(b => {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -1605,14 +1628,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const hint = document.createElement('div');
     hint.className = 'error-hint';
     if (blocked.length) {
-      hint.textContent = 'Close ' + blocked.map(b => b.label).join(' and ')
-        + ' completely and try again: it locks its session file while it is open.';
+      hint.textContent = 'Signing in inside Y2obi is the reliable route: '
+        + blocked.map(b => b.label).join(' and ')
+        + ' encrypts its cookies so that no other program can read them.';
     } else if (!usable.length) {
-      hint.textContent = 'No supported browser found. Export a cookies.txt with a browser '
-        + 'extension and upload it here.';
+      hint.textContent = 'Sign in inside Y2obi, or upload a cookies.txt exported '
+        + 'with a browser extension.';
     } else {
-      hint.textContent = 'This reads the YouTube session your browser already has. '
-        + 'Nothing leaves this machine, and Y2obi only sends it to YouTube, exactly as your browser does.';
+      hint.textContent = 'Sign in inside Y2obi and it keeps the session itself. '
+        + 'Nothing leaves this machine, and it is only ever sent to YouTube.';
     }
     ERROR_ACTIONS.appendChild(hint);
   }

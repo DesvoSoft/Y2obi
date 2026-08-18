@@ -46,7 +46,8 @@ def _install_webview2(progress_cb):
         with urllib.request.urlopen(WEBVIEW2_URL, timeout=60) as r, open(tmp, "wb") as f:
             shutil.copyfileobj(r, f)
         progress_cb("Installing WebView2 runtime...")
-        subprocess.run([tmp, "/silent", "/install"], check=True)
+        subprocess.run([tmp, "/silent", "/install"], check=True,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     finally:
         try:
             os.unlink(tmp)
@@ -113,6 +114,8 @@ def _parse_args(argv=None):
                     help="delete settings before starting, so the first-run screen shows again")
     ap.add_argument("--cpu", action="store_true",
                     help="force CPU transcription for this run, ignoring the saved setting")
+    ap.add_argument("--signin", action="store_true",
+                    help="open a YouTube sign-in window (used internally by the app)")
     ap.add_argument("--version", action="version", version=f"Y2obi {VERSION}")
     return ap.parse_args(argv)
 
@@ -269,8 +272,47 @@ class FFmpegSplash:
         self.root.destroy()
 
 
+SIGNIN_PROFILE = "ytsession"
+
+
+def signin_profile_dir():
+    """Where the sign-in window keeps its browser profile.
+
+    Deliberately separate from the app's own WebView2 profile: pywebview's
+    storage_path is per process, and the running app holds its cookie database
+    locked, so a profile we can actually read afterwards has to belong to a
+    process that has exited.
+    """
+    return os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()),
+                        "Y2obi", SIGNIN_PROFILE)
+
+
+def _run_signin_window():
+    """Show YouTube in a normal browser window and let the user sign in.
+
+    Chromium browsers encrypt their cookies with App-Bound Encryption since v127,
+    which no outside process can decrypt: that is the "Failed to decrypt with
+    DPAPI" wall, and it is not going away. A window of our own has no such
+    problem, because the profile is ours.
+    """
+    import webview
+    profile = signin_profile_dir()
+    os.makedirs(profile, exist_ok=True)
+    webview.create_window(
+        "Sign in to YouTube",
+        "https://www.youtube.com/account",
+        width=980, height=800, min_size=(520, 480), resizable=True,
+    )
+    webview.start(private_mode=False, storage_path=profile)
+
+
 def main(argv=None):
     args = _parse_args(argv)
+    if args.signin:
+        # No splash, no server, no single-instance lock: this is a short-lived
+        # child of the running app.
+        _run_signin_window()
+        return
     if args.debug or args.log:
         log_path = args.log or os.path.join(tempfile.gettempdir(), "y2obi-debug.log")
         print(f"[Y2obi] logging to {_start_logging(log_path)}")

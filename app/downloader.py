@@ -90,8 +90,12 @@ def _is_browser_running(browser):
     if not name:
         return False
     try:
+        # CREATE_NO_WINDOW: this runs whenever the browser list is built, and
+        # without it every check flashes a console over the app.
         result = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {name}", "/NH"],
-                                capture_output=True, text=True, timeout=5)
+                                capture_output=True, text=True, timeout=5,
+                                stdin=subprocess.DEVNULL,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return name.lower() in result.stdout.lower()
     except FileNotFoundError:
         return False

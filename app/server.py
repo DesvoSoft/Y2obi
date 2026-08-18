@@ -3,6 +3,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import shutil
 import sys
 import tempfile
@@ -86,6 +87,14 @@ def _refresh_cookies():
     browser = _config().get("cookie_browser")
     if not browser:
         return False
+    if browser == "signin":
+        # The sign-in window is not silent, so this cannot re-open it. Re-reading
+        # the profile is still worth a try: the session there often outlives the
+        # copy we exported.
+        try:
+            return bool(_harvest_signin_cookies())
+        except Exception:
+            return False
     try:
         os.makedirs(os.path.dirname(COOKIES_PATH), exist_ok=True)
         export_cookies_from_browser(browser, COOKIES_PATH)
@@ -197,6 +206,75 @@ def cookies_status():
         "loaded": has_upload,
         "method": "uploaded" if has_upload else None,
     })
+
+
+def _signin_profile():
+    return os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()),
+                        "Y2obi", "ytsession")
+
+
+def _harvest_signin_cookies():
+    """Read the YouTube session out of the sign-in window's own profile.
+
+    That profile is an ordinary Chromium one, so yt-dlp can read it, and
+    crucially it is *ours*: it carries none of the App-Bound Encryption that has
+    made Edge, Chrome and Brave impossible to decrypt from outside since v127,
+    which is the "Failed to decrypt with DPAPI" wall users hit. The window runs
+    in a separate process precisely so nothing holds the database open by now.
+    """
+    import http.cookiejar
+    import yt_dlp.cookies
+
+    profile = _signin_profile()
+    if not os.path.isdir(profile):
+        return 0
+    jar = yt_dlp.cookies.extract_cookies_from_browser("chrome", profile=profile)
+    youtube = [c for c in jar if "youtube.com" in (c.domain or "")]
+    if not youtube:
+        return 0
+    os.makedirs(os.path.dirname(COOKIES_PATH), exist_ok=True)
+    moz = http.cookiejar.MozillaCookieJar(COOKIES_PATH)
+    for cookie in jar:
+        moz.set_cookie(cookie)
+    moz.save(ignore_discard=True, ignore_expires=True)
+    return len(youtube)
+
+
+@app.route("/api/cookies/signin", methods=["POST"])
+def cookies_signin():
+    """Open a sign-in window, wait for it, then take the session from it."""
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable, "--signin"]
+    else:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cmd = [sys.executable, os.path.join(root, "main.py"), "--signin"]
+    try:
+        subprocess.run(cmd, timeout=900,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False,
+                        "reason": "The sign-in window was left open too long."}), 400
+    except OSError as e:
+        return jsonify({"ok": False, "reason": str(e)}), 500
+
+    try:
+        found = _harvest_signin_cookies()
+    except Exception as e:
+        return jsonify({"ok": False, "reason": f"Could not read the session: {e}"}), 500
+    if not found:
+        return jsonify({"ok": False,
+                        "reason": "No YouTube session found. Sign in to YouTube in "
+                                  "the window, then close it."}), 400
+
+    cfg = _config()
+    cfg["cookie_browser"] = "signin"
+    try:
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except OSError:
+        pass
+    return jsonify({"ok": True, "method": "signin", "cookies": found})
 
 
 @app.route("/api/cookies/browsers", methods=["GET"])
@@ -838,7 +916,8 @@ def open_folder():
     """Open the output folder in Explorer — desktop only."""
     import subprocess
     try:
-        subprocess.Popen(["explorer", DOWNLOAD_DIR])
+        subprocess.Popen(["explorer", DOWNLOAD_DIR],
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except Exception:
         pass
     return jsonify({"ok": True})
@@ -861,7 +940,8 @@ def open_file(task_id):
     try:
         if request.args.get("reveal"):
             # /select, needs the comma glued to the path, hence one argument.
-            subprocess.Popen(["explorer", f"/select,{os.path.normpath(path)}"])
+            subprocess.Popen(["explorer", f"/select,{os.path.normpath(path)}"],
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         else:
             os.startfile(path)
     except (AttributeError, OSError) as e:
