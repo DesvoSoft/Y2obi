@@ -30,7 +30,7 @@ dist/
 *.DS_Store
 Thumbs.db
 
-# Claude Code
-.claude/settings.local.json
+# Local tooling and working notes (not part of the project)
+.claude/
 .serena/
 CLAUDE.md
