@@ -609,7 +609,7 @@
       <span class="footer-sep">|</span>
       <button type="button" class="footer-link" id="settingsLink" title="Settings">Settings</button>
       <span class="footer-sep">|</span>
-      <button type="button" class="footer-link" id="cookieLink" title="Cookies">Cookies: off</button>
+      <button type="button" class="footer-link" id="cookieLink">YouTube: not connected</button>
       <span class="footer-sep">|</span>
       <a class="footer-link" href="https://github.com/DesvoSoft" target="_blank">DesvoSoft</a>
       <span class="details-group" id="detailsGroup" style="display:none">
@@ -1117,8 +1117,11 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
 
         <div class="set-section">
-          <h4>Cookies</h4>
-          <div class="models-sub">Only needed for age-restricted or private videos.</div>
+          <h4>YouTube sign-in</h4>
+          <div class="models-sub">
+            Lets Y2obi act as your signed-in self, which YouTube sometimes insists on.
+            Y2obi reconnects on its own when the session expires.
+          </div>
           <div class="model-item">
             <div>
               <div class="model-title" id="setCookieState"></div>
@@ -1126,7 +1129,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
             <div class="model-actions">
               <button class="mini-btn" id="setCookieLoad">Load...</button>
-              <button class="mini-btn danger" id="setCookieClear">Clear</button>
+              <button class="mini-btn danger" id="setCookieClear">Disconnect</button>
             </div>
           </div>
         </div>
@@ -1202,15 +1205,16 @@ document.addEventListener('DOMContentLoaded', () => {
       // Cookies
       const cookieState = panel.querySelector('#setCookieState');
       cookieState.innerHTML = cookiesLoaded
-        ? `Loaded <span class="tag">${escHtml(cookieMethod || 'on')}</span>`
-        : 'Not loaded <span class="tag muted">optional</span>';
+        ? `Connected <span class="tag">${escHtml(cookieMethod || 'on')}</span>`
+        : 'Not connected <span class="tag muted">usually not needed</span>';
+      panel.querySelector('#setCookieLoad').textContent = cookiesLoaded ? 'Change' : 'Connect';
       panel.querySelector('#setCookieLoad').onclick = () => { close(); showCookieMenu(); };
       const clearBtn = panel.querySelector('#setCookieClear');
       clearBtn.disabled = !cookiesLoaded;
       clearBtn.onclick = () => {
         clearBtn.disabled = true;
         api('/api/cookies', {method: 'DELETE'})
-          .then(() => { cookiesLoaded = false; cookieMethod = null; syncCookieBadge(); toast('Cookies cleared'); render(); })
+          .then(() => { cookiesLoaded = false; cookieMethod = null; syncCookieBadge(); toast('Disconnected'); render(); })
           .catch(() => { toast('Could not clear cookies'); clearBtn.disabled = false; });
       };
 
@@ -1450,8 +1454,16 @@ document.addEventListener('DOMContentLoaded', () => {
   // The footer line is the only at-a-glance cookie state now; everything you can
   // *do* with cookies lives in Settings.
   function syncCookieBadge() {
-    COOKIE_LINK.textContent = 'Cookies: ' + (cookiesLoaded ? (cookieMethod || 'on') : 'off');
+    // "Cookies" is jargon. What the user cares about is whether the app can act
+    // as their signed-in self on YouTube.
+    COOKIE_LINK.textContent = cookiesLoaded
+      ? 'YouTube: connected' + (cookieMethod && cookieMethod !== 'on' && cookieMethod !== 'file'
+          ? ' (' + cookieMethod + ')' : '')
+      : 'YouTube: not connected';
     COOKIE_LINK.classList.toggle('ok', cookiesLoaded);
+    COOKIE_LINK.title = cookiesLoaded
+      ? 'Y2obi can use your browser session for restricted videos'
+      : 'Only needed if YouTube asks Y2obi to prove it is not a bot';
   }
   function setCookieLabel(name) {
     cookiesLoaded = name !== 'off';
@@ -1466,15 +1478,15 @@ document.addEventListener('DOMContentLoaded', () => {
     menu.id = 'cookieMenu';
     menu.className = 'cookie-menu';
     menu.innerHTML = `
-      <h3>Load YouTube cookies</h3>
+      <h3>Connect your YouTube session</h3>
       <div class="menu-list">
         <button class="primary" id="exportFirefox">Firefox (recommended)</button>
         <button id="exportEdge">Edge (close first)</button>
         <button id="exportBrave">Brave (close first)</button>
         <button id="exportChrome">Chrome (close first)</button>
-        <button id="uploadCookieFile">Upload cookies.txt</button>
+        <button id="uploadCookieFile">Use a cookies.txt file instead</button>
       </div>
-      <div class="menu-note">Only needed for age-restricted or private videos.<br>Chromium browsers must be fully closed before export.</div>`;
+      <div class="menu-note">Reads the session your browser already has. Nothing leaves this machine.<br>Edge, Chrome and Brave must be fully closed first; Firefox can stay open.</div>`;
     document.body.appendChild(menu);
     const closeMenu = () => {
       menu.remove();
@@ -1489,7 +1501,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('keydown', onMenuKey);
     const doExport = (browser) => {
       menu.remove();
-      COOKIE_LINK.textContent = 'Cookies: ...';
+      COOKIE_LINK.textContent = 'Connecting...';
       api('/api/cookies/export', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({browser}) })
         .then(r => r.json())
         .then(d => {
@@ -1552,23 +1564,23 @@ document.addEventListener('DOMContentLoaded', () => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'fix-btn';
-      btn.textContent = 'Use ' + b.label + ' cookies';
+      btn.textContent = 'Connect ' + b.label;
       btn.onclick = () => {
         ERROR_ACTIONS.querySelectorAll('button').forEach(x => x.disabled = true);
-        btn.textContent = 'Reading ' + b.label + '...';
+        btn.textContent = 'Connecting ' + b.label + '...';
         api('/api/cookies/export', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({browser: b.name}),
         })
           .then(r => r.json())
           .then(d => {
-            if (!d.ok) { showAuthError(d.reason || 'Could not read those cookies.', browsers, retry); return; }
+            if (!d.ok) { showAuthError(d.reason || 'Could not read that browser session.', browsers, retry); return; }
             setCookieLabel(b.name);
             hideError();
-            toast('Cookies loaded from ' + b.label);
+            toast('Connected to your ' + b.label + ' session');
             if (retry) retry();
           })
-          .catch(() => showAuthError('Could not read those cookies.', browsers, retry));
+          .catch(() => showAuthError('Could not read that browser session.', browsers, retry));
       };
       ERROR_ACTIONS.appendChild(btn);
     });
@@ -1576,7 +1588,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const upload = document.createElement('button');
     upload.type = 'button';
     upload.className = 'fix-btn ghost';
-    upload.textContent = 'Upload cookies.txt';
+    upload.textContent = 'Use a cookies.txt file';
     upload.onclick = () => COOKIE_INPUT.click();
     ERROR_ACTIONS.appendChild(upload);
 
@@ -1584,13 +1596,13 @@ document.addEventListener('DOMContentLoaded', () => {
     hint.className = 'error-hint';
     if (blocked.length) {
       hint.textContent = 'Close ' + blocked.map(b => b.label).join(' and ')
-        + ' completely and try again to use its cookies: it keeps its cookie file locked while open.';
+        + ' completely and try again: it locks its session file while it is open.';
     } else if (!usable.length) {
       hint.textContent = 'No supported browser found. Export a cookies.txt with a browser '
         + 'extension and upload it here.';
     } else {
-      hint.textContent = 'Nothing is uploaded anywhere. The cookies stay on this machine and '
-        + 'are only sent to YouTube, exactly as your browser sends them.';
+      hint.textContent = 'This reads the YouTube session your browser already has. '
+        + 'Nothing leaves this machine, and Y2obi only sends it to YouTube, exactly as your browser does.';
     }
     ERROR_ACTIONS.appendChild(hint);
   }

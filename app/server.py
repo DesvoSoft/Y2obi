@@ -13,7 +13,8 @@ import uuid
 from flask import Flask, request, jsonify, send_file, send_from_directory
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from app.downloader import (Downloader, DownloadError, AuthRequired, PlaylistError,
+from app.downloader import (Downloader, DownloadError, AuthRequired,
+                            StreamsUnavailable, PlaylistError,
                             export_cookies_from_browser, installed_browsers,
                             _parse_formats)
 from app import cleanup
@@ -70,6 +71,31 @@ def _require_token():
     return None
 
 
+# Both mean the same thing in practice: YouTube wants a signed-in session.
+BLOCKED = (AuthRequired, StreamsUnavailable)
+
+
+def _refresh_cookies():
+    """Re-read cookies from the browser the user already approved.
+
+    Cookies expire, and when they do the app would otherwise fail with the same
+    scary message it showed the first time and ask the user to do the same
+    ritual again. Consent is given once; after that this heals it quietly.
+    Returns True if a fresh jar was written.
+    """
+    browser = _config().get("cookie_browser")
+    if not browser:
+        return False
+    try:
+        os.makedirs(os.path.dirname(COOKIES_PATH), exist_ok=True)
+        export_cookies_from_browser(browser, COOKIES_PATH)
+        return True
+    except Exception:
+        # Browser uninstalled, running and locked, or the user signed out.
+        # Falling through to the visible prompt is the honest outcome.
+        return False
+
+
 def _make_dl():
     cookies = COOKIES_PATH if os.path.exists(COOKIES_PATH) else None
     return Downloader(_ffmpeg_path, cookies=cookies)
@@ -115,10 +141,17 @@ def analyze():
     if not url:
         return jsonify({"error": "URL required"}), 400
     try:
-        info = _make_dl().get_info(url)
+        try:
+            info = _make_dl().get_info(url)
+        except BLOCKED:
+            # One silent self-heal first: the session the user already approved
+            # has probably just expired, and re-reading it costs a second.
+            if not _refresh_cookies():
+                raise
+            info = _make_dl().get_info(url)
     except PlaylistError as e:
         return jsonify({"error": str(e), "playlist": True}), 400
-    except AuthRequired as e:
+    except BLOCKED as e:
         # The page turns this into one-click buttons for the browsers actually
         # installed, rather than sending the user hunting through settings.
         return jsonify({"error": str(e), "needs_cookies": True,
@@ -182,6 +215,16 @@ def export_cookies():
     try:
         os.makedirs(os.path.dirname(COOKIES_PATH), exist_ok=True)
         export_cookies_from_browser(browser, COOKIES_PATH)
+        # Remembering the choice is what lets _refresh_cookies heal an expiry
+        # later without asking again.
+        cfg = _config()
+        cfg["cookie_browser"] = browser
+        try:
+            os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2)
+        except OSError:
+            pass
         return jsonify({"ok": True, "method": browser})
     except DownloadError as e:
         return jsonify({"ok": False, "reason": str(e)}), 500
@@ -702,6 +745,14 @@ def start_download():
             if t:
                 t["_dl"] = dl
         dl.set_callbacks(progress=_progress_cb(task_id), status=_status_cb(task_id))
+
+        def _go(d):
+            if fmt == "mp4":
+                return d.download_mp4(url, DOWNLOAD_DIR, quality)
+            if fmt == "webm":
+                return d.download_webm(url, DOWNLOAD_DIR, quality)
+            return d.download_mp3(url, DOWNLOAD_DIR)
+
         try:
             if fmt == "mp4":
                 path = dl.download_mp4(url, DOWNLOAD_DIR, quality)
@@ -713,6 +764,28 @@ def start_download():
                 t = tasks.get(task_id)
                 if t:
                     t.update(path=path, done=True, percent=100, status="Complete", _done_at=time.time())
+        except BLOCKED:
+            # Same one silent retry the analyze route gets.
+            if _refresh_cookies():
+                try:
+                    _set(task_id, status="Reconnecting to YouTube...")
+                    path = _go(_make_dl())
+                    with _lock:
+                        t = tasks.get(task_id)
+                        if t:
+                            t.update(path=path, done=True, percent=100,
+                                     status="Complete", _done_at=time.time())
+                    return
+                except Exception as e2:
+                    e = e2
+            else:
+                e = sys.exc_info()[1]
+            with _lock:
+                t = tasks.get(task_id)
+                if t:
+                    t.update(error=str(e), status="Error", done=True,
+                             needs_cookies=True, _done_at=time.time())
+            return
         except Exception as e:
             msg = str(e)
             with _lock:

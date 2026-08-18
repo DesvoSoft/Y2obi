@@ -153,7 +153,8 @@ ever its own. Deleting those three folders removes Y2obi completely.
 
 If YouTube asks Y2obi to confirm it isn't a bot, the app says so in plain words
 and puts the fix in the message itself: one button per browser you actually have
-installed. Click it and the download retries on its own. Nothing is uploaded
+installed. Click it and the download retries on its own. You only do this once:
+Y2obi remembers the browser and reconnects by itself when the session expires. Nothing is uploaded
 anywhere; the cookies stay on your machine and are only sent to YouTube, exactly
 as your browser sends them.
 

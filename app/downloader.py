@@ -28,7 +28,11 @@ QUALITY_MAP_WEBM = {
 }
 
 # Audio format: m4a DASH preferred, fallback to any audio, last resort muxed 360p (format 18 = no DASH/no PO token)
-AUDIO_FORMAT = "bestaudio/best"
+# "best" alone means "best format with video AND audio muxed", which YouTube
+# barely serves any more, so it is a fallback that almost never fires. best*
+# accepts a format with either, and the acodec filter keeps us from happily
+# downloading a silent video stream to transcribe.
+AUDIO_FORMAT = "bestaudio/best*[acodec!=none]/best"
 
 # Player clients tried in order, for both analyze and download. They must stay
 # the same ladder: pinning downloads to the first pair alone made any video that
@@ -47,6 +51,16 @@ class AuthRequired(DownloadError):
     actually helps instead of showing a wall of yt-dlp text that ends in
     "use --cookies-from-browser", which means nothing to someone who just wants
     a video.
+    """
+
+
+class StreamsUnavailable(DownloadError):
+    """YouTube answered, but with nothing usable in it.
+
+    In practice this is the same problem as AuthRequired wearing a different
+    hat: when YouTube throttles anonymous requests it returns a stripped format
+    list, and yt-dlp then reports "Requested format is not available", which
+    sounds like a bug in the app and is not. A browser session fixes it.
     """
 
 
@@ -117,6 +131,19 @@ _AUTH_MARKERS = (
 def looks_like_auth_error(text):
     low = str(text).lower()
     return any(m in low for m in _AUTH_MARKERS)
+
+
+# yt-dlp's wording when the format list came back with nothing we can use.
+_EMPTY_MARKERS = (
+    "requested format is not available",
+    "no video formats found",
+    "unable to extract player response",
+)
+
+
+def looks_like_no_streams(text):
+    low = str(text).lower()
+    return any(m in low for m in _EMPTY_MARKERS)
 
 
 # Where each browser keeps its profile, used to offer only browsers that are
@@ -235,6 +262,11 @@ class Downloader:
                     "YouTube wants to confirm you are signed in before it hands "
                     "this video over."
                 ) from last_err
+            if looks_like_no_streams(last_err):
+                raise StreamsUnavailable(
+                    "YouTube did not offer a usable stream for this video. That "
+                    "usually means it is throttling requests that are not signed in."
+                ) from last_err
             raise DownloadError(f"YouTube error: {last_err}") from last_err
 
         if info and info.get('_type') == 'playlist':
@@ -337,6 +369,11 @@ class Downloader:
             raise AuthRequired(
                 "YouTube wants to confirm you are signed in before it hands "
                 "this video over."
+            ) from last_err
+        if looks_like_no_streams(last_err):
+            raise StreamsUnavailable(
+                "YouTube did not offer a usable stream for this video. That "
+                "usually means it is throttling requests that are not signed in."
             ) from last_err
         raise DownloadError(f"YouTube download error: {last_err}") from last_err
 

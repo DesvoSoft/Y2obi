@@ -547,3 +547,94 @@ class AuthErrorSurfacing(unittest.TestCase):
             self.assertIn(b["name"], ("firefox", "edge", "chrome", "brave"))
             self.assertIn("running", b)
             self.assertIn("needs_close", b)
+
+
+class SessionSelfHealing(unittest.TestCase):
+    """Sessions expire. The user approved a browser once; they should not have
+    to repeat the ritual every time YouTube decides the cookies are stale."""
+
+    def setUp(self):
+        self._saved = srv._session_token
+        self._config, self._cookies = srv.CONFIG_PATH, srv.COOKIES_PATH
+        srv._session_token = None
+        self.dir = tempfile.mkdtemp(prefix="y2obi_t_")
+        srv.CONFIG_PATH = os.path.join(self.dir, "config.json")
+        srv.COOKIES_PATH = os.path.join(self.dir, "cookies.txt")
+        self.c = srv.app.test_client()
+        self._export = srv.export_cookies_from_browser
+
+    def tearDown(self):
+        srv.export_cookies_from_browser = self._export
+        srv._session_token = self._saved
+        srv.CONFIG_PATH, srv.COOKIES_PATH = self._config, self._cookies
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _remember(self, browser):
+        import json as _json
+        with open(srv.CONFIG_PATH, "w", encoding="utf-8") as f:
+            _json.dump({"cookie_browser": browser}, f)
+
+    def test_no_remembered_browser_means_no_silent_retry(self):
+        self.assertFalse(srv._refresh_cookies())
+
+    def test_a_remembered_browser_is_re_read(self):
+        self._remember("firefox")
+        calls = []
+        srv.export_cookies_from_browser = lambda b, p: calls.append((b, p))
+        self.assertTrue(srv._refresh_cookies())
+        self.assertEqual(calls[0][0], "firefox")
+
+    def test_a_failing_export_does_not_explode(self):
+        # Browser uninstalled, locked, or signed out: fall through to asking.
+        self._remember("chrome")
+        def boom(b, p):
+            raise RuntimeError("locked")
+        srv.export_cookies_from_browser = boom
+        self.assertFalse(srv._refresh_cookies())
+
+    def test_choosing_a_browser_remembers_it(self):
+        srv.export_cookies_from_browser = lambda b, p: open(p, "w").close()
+        r = self.c.post("/api/cookies/export", json={"browser": "firefox"})
+        self.assertTrue(r.get_json()["ok"])
+        import json as _json
+        self.assertEqual(_json.load(open(srv.CONFIG_PATH))["cookie_browser"], "firefox")
+
+    def test_analyze_retries_once_after_healing(self):
+        from app import downloader as dl
+        self._remember("firefox")
+        srv.export_cookies_from_browser = lambda b, p: open(p, "w").close()
+        state = {"n": 0}
+
+        class _Flaky:
+            def get_info(self, url):
+                state["n"] += 1
+                if state["n"] == 1:
+                    raise dl.AuthRequired("signed in required")
+                return {"title": "ok", "formats": [], "duration": 1}
+
+        real = srv._make_dl
+        srv._make_dl = lambda: _Flaky()
+        try:
+            r = self.c.post("/api/analyze", json={"url": "https://youtu.be/x"})
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(state["n"], 2)   # failed, healed, succeeded
+        finally:
+            srv._make_dl = real
+
+    def test_it_gives_up_after_one_retry(self):
+        from app import downloader as dl
+        self._remember("firefox")
+        srv.export_cookies_from_browser = lambda b, p: open(p, "w").close()
+
+        class _Always:
+            def get_info(self, url):
+                raise dl.StreamsUnavailable("nothing usable")
+
+        real = srv._make_dl
+        srv._make_dl = lambda: _Always()
+        try:
+            r = self.c.post("/api/analyze", json={"url": "https://youtu.be/x"})
+            self.assertEqual(r.status_code, 400)
+            self.assertTrue(r.get_json()["needs_cookies"])
+        finally:
+            srv._make_dl = real
