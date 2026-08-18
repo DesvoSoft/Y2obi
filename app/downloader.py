@@ -34,10 +34,16 @@ QUALITY_MAP_WEBM = {
 # downloading a silent video stream to transcribe.
 AUDIO_FORMAT = "bestaudio/best*[acodec!=none]/best"
 
-# Player clients tried in order, for both analyze and download. They must stay
-# the same ladder: pinning downloads to the first pair alone made any video that
+# Player clients tried in order, for both analyze and download. Every name here
+# must exist in the installed yt-dlp: it drops unknown ones with a warning and
+# silently falls back to its defaults, so a dead rung is not an error, it is a
+# wasted extraction attempt. tests/test_downloader.py checks them against the
+# installed version, because yt-dlp removes clients between releases and
+# tv_embedded had already gone that way unnoticed.
+#
+# They must stay the same ladder: pinning downloads to the first pair alone made any video that
 # only resolved via tv_embedded/web analyze fine and then fail at download.
-PLAYER_CLIENTS = (['android_vr', 'mweb'], ['tv_embedded'], ['web'])
+PLAYER_CLIENTS = (['android_vr', 'mweb'], ['web_safari'], ['web'])
 
 
 class DownloadError(Exception):

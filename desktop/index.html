@@ -1636,7 +1636,11 @@ document.addEventListener('DOMContentLoaded', () => {
   function buildQualityChips(qualities) {
     QUALITY_CHIPS.innerHTML = '';
     selectedQuality = 'Best';
-    const labels = qualities.length ? ['Best', ...qualities] : ['Best', '1080p', '720p', '480p', '360p'];
+    // _parse_formats already answers "Best" when it found no video heights, so
+    // prepending another one showed 'Best, Best'. And inventing 1080p/720p for a
+    // list we never got just offers resolutions the download will fail on.
+    const labels = qualities.filter(q => q !== 'Best');
+    labels.unshift('Best');
     labels.forEach((q, i) => {
       const c = makeChip('', i === 0, () => { selectedQuality = q; });
       c.textContent = q;

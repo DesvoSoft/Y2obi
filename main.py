@@ -305,13 +305,12 @@ def main(argv=None):
 
     def _poll():
         if result["path"]:
-            splash.close()
             _launch(result["path"])
             return
         if result["error"]:
-            splash.close()
-            root = tk.Tk()
-            root.withdraw()
+            # Reuse the splash root rather than destroying it and building
+            # another one just to own a message box.
+            splash.root.withdraw()
             stage = result.get("stage") or "FFmpeg"
             hint = (
                 "Install FFmpeg manually and add to PATH, or "
@@ -324,35 +323,25 @@ def main(argv=None):
                 f"{stage} Error",
                 f"Could not set up {stage}:\n{result['error']}\n\n{hint}",
             )
-            root.destroy()
+            splash.close()
             sys.exit(1)
         splash.root.after(100, _poll)
 
     def _launch(ffmpeg_path):
         from app.server import start_server
-        splash_root = tk.Tk()
-        splash_root.withdraw()
-
-        # Show a brief "Starting..." window while Flask boots
-        loading = tk.Toplevel(splash_root)
-        loading.title("Y2obi")
-        loading.geometry("300x80")
-        loading.resizable(False, False)
-        loading.configure(bg="#1a1a2e")
-        loading.update_idletasks()
-        sw, sh = loading.winfo_screenwidth(), loading.winfo_screenheight()
-        loading.geometry(f"300x80+{(sw-300)//2}+{(sh-80)//2}")
-        tk.Label(loading, text="Starting Y2obi...", font=("Segoe UI", 12),
-                 bg="#1a1a2e", fg="#e0e0e0").pack(expand=True)
-        loading.update()
+        # One Tk root for the whole pre-window phase. This used to close the
+        # splash, build a second root plus a Toplevel to say "Starting...", then
+        # tear both down before handing over to WinForms: three roots and two
+        # GUI toolkits in one process, for one line of text.
+        splash.update("Starting Y2obi...")
+        splash.root.update()   # paint it now; start_server blocks the loop next
 
         # The token is handed to the page through the URL; the page sends it back
         # as a header on every API call. See _require_token in app/server.py.
         port, token = start_server(ffmpeg_path, DESKTOP_DIR)
         url = f"http://127.0.0.1:{port}/?t={token}"
 
-        loading.destroy()
-        splash_root.destroy()
+        splash.close()
 
         import webview
         # Sweep what a killed or crashed earlier run left in %TEMP%. Each

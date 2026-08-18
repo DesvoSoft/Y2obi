@@ -70,6 +70,22 @@ class QualityMaps(unittest.TestCase):
 
 
 class PlayerClients(unittest.TestCase):
+    def test_every_client_exists_in_the_installed_yt_dlp(self):
+        """yt-dlp removes player clients between releases and merely warns.
+
+        A name that no longer exists is not an error: yt-dlp drops it and falls
+        back to its defaults, so the rung silently becomes a wasted attempt.
+        tv_embedded had already disappeared that way before anyone noticed.
+        """
+        try:
+            from yt_dlp.extractor.youtube._base import INNERTUBE_CLIENTS
+        except ImportError:
+            self.skipTest("yt-dlp moved INNERTUBE_CLIENTS")
+        for clients in dl.PLAYER_CLIENTS:
+            for name in clients:
+                self.assertIn(name, INNERTUBE_CLIENTS,
+                              f"{name} is not a client in the installed yt-dlp")
+
     def test_ladder_is_ordered_and_non_empty(self):
         self.assertTrue(dl.PLAYER_CLIENTS)
         for clients in dl.PLAYER_CLIENTS:
