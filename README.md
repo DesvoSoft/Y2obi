@@ -21,10 +21,22 @@
 
 ### "Windows protected your PC" / browser blocked the download?
 
-Y2obi isn't code-signed (a signing certificate costs money we're not putting
-into a free hobby project), so Windows SmartScreen, Defender, or your browser
-may flag the download or show a warning the first time. This is a false
-positive common to small unsigned apps, not malware:
+Y2obi isn't code-signed, so Windows SmartScreen, Defender, or your browser may
+warn you the first time. That's a false positive common to small unsigned apps,
+not malware.
+
+I'm an independent developer, and a Windows code-signing certificate is a
+recurring yearly cost this project doesn't justify yet. Without one, Windows has
+no publisher to vouch for and warns about any new executable until enough people
+have run it — reputation it can only build slowly.
+
+**If that leaves you uneasy, don't take my word for it.** The entire source is
+in this repository, the release is built by a [public GitHub Actions
+workflow](.github/workflows/release.yml) you can read line by line, and every
+release ships a checksum so you can confirm the download is byte-for-byte what
+CI produced. You can also skip the executable and [run from source](#run-from-source).
+
+Getting past the warning:
 
 - **Browser deleted/blocked the file**: check the browser's download history,
   restore/keep it.

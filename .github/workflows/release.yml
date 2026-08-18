@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v*"
+  # So the whole thing can be rehearsed from the Actions tab before a tag is cut.
+  # Without a tag the release step is skipped and the exe is left as an artifact.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -23,6 +26,9 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Run tests
+        run: python -m unittest discover tests
+
       - name: Download FFmpeg
         shell: pwsh
         run: |
@@ -30,42 +36,77 @@ jobs:
           Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
           Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-extract
           $exe = Get-ChildItem -Path ffmpeg-extract -Recurse -Filter ffmpeg.exe | Select-Object -First 1
-          Copy-Item $exe.FullName -Destination core\ffmpeg.exe
+          if (-not $exe) { throw "ffmpeg.exe not found in the archive" }
+          Copy-Item $exe.FullName -Destination core/ffmpeg.exe
           Remove-Item ffmpeg.zip
           Remove-Item -Recurse -Force ffmpeg-extract
 
       - name: Download whisper.cpp and the Vulkan backend
         shell: pwsh
         run: |
-          # Pinned on purpose: core/whisper/MANIFEST.json records the sha256 of
-          # every file below and build.spec refuses to build if one drifts. The
-          # Vulkan backend comes from llama.cpp because whisper.cpp publishes no
-          # Vulkan build for Windows; they share ggml and the pair is verified
-          # with tools/verify_whisper.py.
-          New-Item -ItemType Directory -Force -Path core\whisper | Out-Null
+          # Both releases are pinned. core/whisper/MANIFEST.json holds the sha256
+          # of every file copied here and build.spec refuses to build when one
+          # drifts, so this step cannot quietly ship a different combination.
+          # The Vulkan backend comes from llama.cpp because whisper.cpp publishes
+          # no Vulkan build for Windows; they share ggml, and the pair is checked
+          # end to end by tools/verify_whisper.py.
+          New-Item -ItemType Directory -Force -Path core/whisper | Out-Null
+
           Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip" -OutFile whisper.zip
           Expand-Archive -Path whisper.zip -DestinationPath whisper-extract
+
           Invoke-WebRequest -Uri "https://github.com/ggml-org/llama.cpp/releases/download/b10472/llama-b10472-bin-win-vulkan-x64.zip" -OutFile vulkan.zip
           Expand-Archive -Path vulkan.zip -DestinationPath vulkan-extract
-          $fromWhisper = @('whisper-cli.exe','whisper.dll','ggml.dll','ggml-base.dll','ggml-cpu-haswell.dll','ggml-cpu-x64.dll')
+
+          $fromWhisper = @(
+            'whisper-cli.exe',
+            'whisper.dll',
+            'ggml.dll',
+            'ggml-base.dll',
+            'ggml-cpu-haswell.dll',
+            'ggml-cpu-x64.dll'
+          )
           foreach ($name in $fromWhisper) {
             $src = Get-ChildItem -Path whisper-extract -Recurse -Filter $name | Select-Object -First 1
             if (-not $src) { throw "$name not found in the whisper.cpp release" }
-            Copy-Item $src.FullName -Destination core\whisper          }
+            Copy-Item $src.FullName -Destination core/whisper/
+          }
+
           $vk = Get-ChildItem -Path vulkan-extract -Recurse -Filter ggml-vulkan.dll | Select-Object -First 1
           if (-not $vk) { throw "ggml-vulkan.dll not found in the llama.cpp release" }
-          Copy-Item $vk.FullName -Destination core\whisper          Remove-Item whisper.zip, vulkan.zip
+          Copy-Item $vk.FullName -Destination core/whisper/
+
+          Remove-Item whisper.zip, vulkan.zip
           Remove-Item -Recurse -Force whisper-extract, vulkan-extract
 
-      - name: Run tests
-        run: python -m unittest discover tests
+      - name: Verify the pinned binaries
+        shell: pwsh
+        run: |
+          # build.spec would catch this too, but failing here says plainly which
+          # file drifted instead of burying it in a PyInstaller run.
+          $manifest = Get-Content core/whisper/MANIFEST.json | ConvertFrom-Json
+          $bad = 0
+          foreach ($name in $manifest.files.PSObject.Properties.Name) {
+            $expected = $manifest.files.$name.sha256
+            $path = "core/whisper/$name"
+            if (-not (Test-Path $path)) { Write-Host "MISSING $name"; $bad++; continue }
+            $actual = (Get-FileHash -Path $path -Algorithm SHA256).Hash.ToLower()
+            if ($actual -ne $expected) {
+              Write-Host "MISMATCH $name"
+              Write-Host "  expected $expected"
+              Write-Host "  actual   $actual"
+              $bad++
+            }
+          }
+          if ($bad -gt 0) { throw "$bad pinned file(s) do not match MANIFEST.json" }
+          Write-Host "all $($manifest.files.PSObject.Properties.Name.Count) pinned files match"
 
       - name: Build exe
         run: pyinstaller build.spec
 
       - name: Zip release artifact
         shell: pwsh
-        run: Compress-Archive -Path dist\Y2obi.exe -DestinationPath Y2obi-win.zip
+        run: Compress-Archive -Path dist/Y2obi.exe -DestinationPath Y2obi-win.zip
 
       - name: Checksum
         shell: pwsh
@@ -73,7 +114,19 @@ jobs:
           $hash = (Get-FileHash -Path Y2obi-win.zip -Algorithm SHA256).Hash
           "SHA256  $hash  Y2obi-win.zip" | Out-File -FilePath checksum.txt -Encoding utf8
 
+      # On a manual run there is no tag to attach a release to, so keep the build
+      # as a downloadable artifact instead. This is what makes a rehearsal useful.
+      - name: Upload build artifact
+        if: startsWith(github.ref, 'refs/tags/') == false
+        uses: actions/upload-artifact@v4
+        with:
+          name: Y2obi-win
+          path: |
+            Y2obi-win.zip
+            checksum.txt
+
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -82,6 +135,18 @@ jobs:
           generate_release_notes: true
           body: |
             > **Windows blocked the download or shows a SmartScreen warning?**
-            > That's expected for an unsigned indie app, not a sign of malware — see the
-            > [Download](https://github.com/DesvoSoft/Y2obi#download) section in the README
-            > for why it happens and how to verify/run it safely.
+            > That's expected for an unsigned app, not a sign of malware.
+            >
+            > Y2obi is built by an independent developer, and a Windows
+            > code-signing certificate is a recurring cost this project doesn't
+            > justify yet. Without one, Windows has no publisher to vouch for and
+            > warns about any new executable until enough people have run it.
+            >
+            > If that leaves you uneasy, don't take my word for it: **the whole
+            > source is here to read**, the release is built by a public GitHub
+            > Actions workflow you can inspect, and `checksum.txt` lets you verify
+            > the download is byte-for-byte what CI produced. You can also skip the
+            > exe entirely and [run it from source](https://github.com/DesvoSoft/Y2obi#run-from-source).
+            >
+            > See the [Download](https://github.com/DesvoSoft/Y2obi#download)
+            > section of the README for how to get past the warning.
