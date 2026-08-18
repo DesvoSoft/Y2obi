@@ -699,6 +699,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let localFile = null;         // probe result from /api/analyze_file
   let selectedHeight = null;    // null = keep the source resolution
   let videoInfo = null, currentUrl = null, downloading = false;
+  let lastBrowsers = null;   // remembered so the audio warning can offer the fix
   let taskId = null, pollTimer = null, lastError = null, selectedQuality = 'Best';
   let selectedFormat = 'mp4';
   let selectedModel = null, selectedLang = 'auto', transcribeAvailable = false;
@@ -1555,6 +1556,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // fix, so the fix goes in the error box: a button per browser that is actually
   // installed, and the action is retried automatically once cookies are in.
   function showAuthError(msg, browsers, retry) {
+    if (browsers) lastBrowsers = browsers;
+    if (!lastBrowsers) {
+      // No auth error has happened yet, so nobody has told us what is installed.
+      api('/api/cookies/browsers').then(r => r.json())
+        .then(d => { lastBrowsers = d.browsers || []; showAuthError(msg, lastBrowsers, retry); })
+        .catch(() => { lastBrowsers = []; showAuthError(msg, [], retry); });
+      return;
+    }
+    browsers = browsers || lastBrowsers;
     showError(msg);
     ERROR_ACTIONS.classList.add('visible');
     const usable = (browsers || []).filter(b => !(b.needs_close && b.running));
@@ -1646,14 +1656,22 @@ document.addEventListener('DOMContentLoaded', () => {
   // there is no video track, MP4.
   function setFmtEnabled(enabled) {
     const isFile = sourceMode === 'file';
+    // YouTube returns a stripped format list when it is throttling anonymous
+    // requests, and audio is the first thing to disappear. We already know this
+    // at analyze time, so say it now instead of failing after the download.
+    const noAudio = !isFile && !!videoInfo && videoInfo.has_audio === false;
     fmtChips.forEach(c => {
       let off = !enabled || (c === FMT_TXT && !transcribeAvailable);
       if (enabled && isFile) {
         if (c === FMT_WEBM) off = true;
         if (c === FMT_MP4 && localFile && !localFile.has_video) off = true;
       }
+      if (enabled && noAudio && (c === FMT_MP3 || c === FMT_TXT)) off = true;
       c.disabled = off;
     });
+    if (noAudio) {
+      FMT_MP3.title = FMT_TXT.title = 'YouTube did not return an audio stream for this video';
+    }
     FMT_WEBM.title = isFile ? 'WEBM is only available for YouTube downloads' : '';
     FMT_MP4.title = (isFile && localFile && !localFile.has_video)
       ? 'That file has no video track' : '';
@@ -1728,6 +1746,15 @@ document.addEventListener('DOMContentLoaded', () => {
         THUMB_PH.textContent = 'No thumbnail';
       }
       buildQualityChips(data.qualities || []);
+      if (data.has_audio === false) {
+        // Nothing to extract audio from. Same cause as the bot check, so offer
+        // the same one-click fix rather than letting them pick MP3 and wait.
+        if (selectedFormat === 'mp3' || selectedFormat === 'txt') selectFormat('mp4');
+        showAuthError(
+          'YouTube returned no audio stream for this video, so MP3 and transcript '
+          + 'are unavailable. That usually means it is throttling requests that are '
+          + 'not signed in.', lastBrowsers, onAnalyze);
+      }
       syncOptionRows();
     })
     .catch(err => { setAnalyzing(false); showError('Network error: ' + err.message); });

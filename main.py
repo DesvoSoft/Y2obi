@@ -68,11 +68,13 @@ def _arm_stall_watchdog():
 
     A watchdog written in Python cannot report a freeze that holds the GIL,
     because it would be frozen too. faulthandler's timer lives in C and fires
-    regardless, which is the only way to see this kind of hang from the inside.
+    regardless, which is the only way to see that kind of hang from the inside.
+    The timer is re-armed by a healthy Python thread, so it only fires when that
+    thread stops getting scheduled.
 
-    The timer is re-armed continuously by a healthy Python thread, so it only
-    ever fires when that thread stops getting scheduled. Costs nothing while the
-    app is well, and writes the one thing worth having when it is not.
+    Only armed under --debug. It costs two threads and an open file for the life
+    of the process, which is not a price a normal run should pay for a fault
+    nobody has reproduced since analyze stopped being able to hang for minutes.
     """
     path = os.path.join(tempfile.gettempdir(), STALL_LOG)
     try:
@@ -269,10 +271,12 @@ class FFmpegSplash:
 
 def main(argv=None):
     args = _parse_args(argv)
-    _arm_stall_watchdog()
     if args.debug or args.log:
         log_path = args.log or os.path.join(tempfile.gettempdir(), "y2obi-debug.log")
         print(f"[Y2obi] logging to {_start_logging(log_path)}")
+        stall = _arm_stall_watchdog()
+        if stall:
+            print(f"[Y2obi] stall watchdog armed, would report to {stall}")
     if args.cpu:
         # Read by app/server.py when it resolves the processing device.
         os.environ["Y2OBI_FORCE_CPU"] = "1"
