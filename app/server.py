@@ -351,6 +351,11 @@ def _device():
     had a backend must not survive the backend going away, so that degrades to
     CPU rather than producing a broken run.
     """
+    # `Y2obi.exe --cpu` overrides the saved setting for one run, which is how
+    # you tell "the GPU is misbehaving" apart from "something else is wrong"
+    # without touching the user's configuration.
+    if os.environ.get("Y2OBI_FORCE_CPU"):
+        return "cpu"
     gpu = transcriber.gpu_backend(get_whisper_cli())
     want = (_config().get("device") or ("gpu" if gpu else "cpu")).lower()
     return "gpu" if (want == "gpu" and gpu) else "cpu"

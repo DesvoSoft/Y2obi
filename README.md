@@ -161,6 +161,33 @@ Cookies are stored in `%APPDATA%\Y2obi\cookies.txt` and persist across launches.
 
 ---
 
+## Troubleshooting
+
+The app is built as a windowed program, so it normally prints nothing. If
+something misbehaves, run it from a terminal:
+
+```powershell
+Y2obi.exe --debug
+```
+
+That writes everything to `%TEMP%\y2obi-debug.log` (startup, the local port,
+every request, any error) and enables right-click → Inspect inside the window.
+Attach that log to a bug report.
+
+| Flag | What it does |
+|------|--------------|
+| `--debug` | log to `%TEMP%\y2obi-debug.log`, enable Inspect in the window |
+| `--log FILE` | write the log somewhere specific instead |
+| `--reset` | delete saved settings, so the first-run screen appears again |
+| `--cpu` | force CPU transcription for one run, without changing your setting |
+| `--version` | print the version |
+
+`--cpu` is the quickest way to tell a GPU problem apart from everything else: if
+a transcription fails on the GPU but works with `--cpu`, it is the graphics
+driver, not the app.
+
+---
+
 ## Run from Source
 
 **Easiest way (Windows):** double-click `run.bat`. It creates a virtual

@@ -446,3 +446,40 @@ class DataRootsAreSandboxed(unittest.TestCase):
     def test_the_real_profile_is_not_referenced(self):
         real = os.path.join(os.environ.get("APPDATA", "!none"), "Y2obi")
         self.assertNotEqual(os.path.normcase(srv._APP_DATA), os.path.normcase(real))
+
+
+class ForceCpuFlag(unittest.TestCase):
+    """`Y2obi.exe --cpu` has to win over the saved setting without changing it."""
+
+    def setUp(self):
+        self._saved = srv._session_token
+        self._config = srv.CONFIG_PATH
+        srv._session_token = None
+        self.dir = tempfile.mkdtemp(prefix="y2obi_t_")
+        srv.CONFIG_PATH = os.path.join(self.dir, "config.json")
+        self.c = srv.app.test_client()
+        self._gpu = transcriber.gpu_backend
+        transcriber.gpu_backend = lambda cli: {"name": "VULKAN", "devices": []}
+
+    def tearDown(self):
+        transcriber.gpu_backend = self._gpu
+        srv._session_token = self._saved
+        srv.CONFIG_PATH = self._config
+        os.environ.pop("Y2OBI_FORCE_CPU", None)
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_without_the_flag_a_gpu_is_used(self):
+        os.environ.pop("Y2OBI_FORCE_CPU", None)
+        self.assertEqual(srv._device(), "gpu")
+
+    def test_the_flag_forces_cpu(self):
+        self.c.post("/api/config", json={"device": "gpu"})
+        os.environ["Y2OBI_FORCE_CPU"] = "1"
+        self.assertEqual(srv._device(), "cpu")
+
+    def test_the_flag_does_not_rewrite_the_saved_setting(self):
+        self.c.post("/api/config", json={"device": "gpu"})
+        os.environ["Y2OBI_FORCE_CPU"] = "1"
+        srv._device()
+        import json as _json
+        self.assertEqual(_json.load(open(srv.CONFIG_PATH))["device"], "gpu")

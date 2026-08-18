@@ -1,5 +1,7 @@
+import argparse
 import sys
 import os
+import datetime
 import tkinter as tk
 from tkinter import messagebox
 import threading
@@ -50,8 +52,82 @@ def _install_webview2(progress_cb):
             pass
 
 
+VERSION = "1.3.0"
+
 # Held for the life of the process; releasing it would let a second copy start.
 _instance_mutex = None
+
+
+def _parse_args(argv=None):
+    ap = argparse.ArgumentParser(
+        prog="Y2obi",
+        description="YouTube downloader and offline transcriber.")
+    ap.add_argument("--debug", action="store_true",
+                    help="write a log file and enable right-click Inspect in the window")
+    ap.add_argument("--log", metavar="FILE",
+                    help="write the log here (implies --debug logging, default "
+                         "%%TEMP%%" + os.sep + "y2obi-debug.log)")
+    ap.add_argument("--reset", action="store_true",
+                    help="delete settings before starting, so the first-run screen shows again")
+    ap.add_argument("--cpu", action="store_true",
+                    help="force CPU transcription for this run, ignoring the saved setting")
+    ap.add_argument("--version", action="version", version=f"Y2obi {VERSION}")
+    return ap.parse_args(argv)
+
+
+class _Tee:
+    """Write to the log file and to the original stream, if there is one.
+
+    The released exe is built windowed, so sys.stdout is None and anything the
+    app prints is lost. That is fine until something misbehaves on a machine
+    that is not this one, which is exactly when the output matters.
+    """
+
+    def __init__(self, stream, handle):
+        self._stream = stream
+        self._handle = handle
+
+    def write(self, text):
+        try:
+            self._handle.write(text)
+            self._handle.flush()
+        except (OSError, ValueError):
+            pass
+        if self._stream:
+            try:
+                self._stream.write(text)
+            except (OSError, ValueError):
+                pass
+
+    def flush(self):
+        for target in (self._handle, self._stream):
+            try:
+                if target:
+                    target.flush()
+            except (OSError, ValueError):
+                pass
+
+
+def _start_logging(path):
+    handle = open(path, "a", encoding="utf-8", errors="replace")
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    handle.write(chr(10) + "===== Y2obi " + VERSION + " started " + stamp + " =====" + chr(10))
+    handle.write("frozen=" + str(getattr(sys, "frozen", False))
+                 + " exe=" + sys.executable + chr(10))
+    sys.stdout = _Tee(sys.stdout, handle)
+    sys.stderr = _Tee(sys.stderr, handle)
+    return path
+
+
+def _reset_settings():
+    """Remove saved preferences so the next start behaves like a fresh install."""
+    from app.server import CONFIG_PATH
+    try:
+        if os.path.exists(CONFIG_PATH):
+            os.remove(CONFIG_PATH)
+            print(f"[Y2obi] removed {CONFIG_PATH}")
+    except OSError as e:
+        print(f"[Y2obi] could not remove settings: {e}")
 
 
 def _claim_single_instance():
@@ -151,8 +227,18 @@ class FFmpegSplash:
         self.root.destroy()
 
 
-def main():
+def main(argv=None):
+    args = _parse_args(argv)
+    if args.debug or args.log:
+        log_path = args.log or os.path.join(tempfile.gettempdir(), "y2obi-debug.log")
+        print(f"[Y2obi] logging to {_start_logging(log_path)}")
+    if args.cpu:
+        # Read by app/server.py when it resolves the processing device.
+        os.environ["Y2OBI_FORCE_CPU"] = "1"
+    if args.reset:
+        _reset_settings()
     if not _claim_single_instance():
+        print("[Y2obi] another instance is already running")
         return
     splash = FFmpegSplash()
     result = {"path": None, "error": None, "stage": None}
@@ -253,7 +339,9 @@ def main():
         storage = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()),
                                "Y2obi", "webview")
         os.makedirs(storage, exist_ok=True)
-        webview.start(private_mode=False, storage_path=storage)
+        # debug=True turns on right-click Inspect in the window.
+        webview.start(private_mode=False, storage_path=storage,
+                      debug=bool(args.debug))
 
     splash.root.after(100, _poll)
     splash.root.mainloop()
