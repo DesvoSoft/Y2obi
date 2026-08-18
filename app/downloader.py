@@ -35,6 +35,13 @@ QUALITY_MAP_WEBM = {
 # downloading a silent video stream to transcribe.
 AUDIO_FORMAT = "bestaudio/best*[acodec!=none]/best"
 
+# One client per rung, never a pair. yt-dlp merges the formats of every client
+# in a rung, so pairing a working client with a blocked one poisons the list:
+# android_vr + mweb analyzed fine and then failed the actual fetch with HTTP 403,
+# because the selected format came from the blocked half. Measured against a live
+# video: android_vr alone gives 31 formats and fetches 206, android gives 5 and
+# fetches, and mweb/web_safari/web/tv/ios/web_embedded are all bot-blocked.
+#
 # Player clients tried in order, for both analyze and download. Every name here
 # must exist in the installed yt-dlp: it drops unknown ones with a warning and
 # silently falls back to its defaults, so a dead rung is not an error, it is a
@@ -44,7 +51,7 @@ AUDIO_FORMAT = "bestaudio/best*[acodec!=none]/best"
 #
 # They must stay the same ladder: pinning downloads to the first pair alone made any video that
 # only resolved via tv_embedded/web analyze fine and then fail at download.
-PLAYER_CLIENTS = (['android_vr', 'mweb'], ['web_safari'], ['web'])
+PLAYER_CLIENTS = (['android_vr'], ['android'], ['web_safari'], ['web'])
 
 
 class DownloadError(Exception):
@@ -191,6 +198,37 @@ def installed_browsers():
     return found
 
 
+# Cookie names YouTube only sets for a signed-in account. Everything else it
+# hands out on a first visit.
+SESSION_COOKIES = frozenset({
+    "SID", "HSID", "SSID", "APISID", "SAPISID", "LOGIN_INFO",
+    "__Secure-1PSID", "__Secure-3PSID", "__Secure-1PSIDTS", "__Secure-3PSIDTS",
+})
+
+
+def has_session_cookies(path):
+    """True if this jar actually proves a signed-in YouTube account.
+
+    A jar of VISITOR_INFO1_LIVE, YSC and NID is not a session: those come from
+    merely loading the page. Sending them is worse than sending nothing, because
+    a visitor id that has already been throttled gets throttled again on sight,
+    which turns a fixable block into a permanent one.
+    """
+    if not path or not os.path.exists(path):
+        return False
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith("#") or not line.strip():
+                    continue
+                parts = line.split("	")
+                if len(parts) >= 7 and parts[5] in SESSION_COOKIES:
+                    return True
+    except OSError:
+        return False
+    return False
+
+
 def _parse_formats(info):
     """Return available video qualities and whether audio-only is available."""
     fmts = info.get("formats") or []
@@ -259,7 +297,11 @@ class Downloader:
                     info = ydl.extract_info(url, download=False)
                 break
             except yt_dlp.utils.DownloadError as e:
-                last_err = e
+                # Keep the first failure, not the last. The ladder ends on the
+                # weakest client, so overwriting meant a precise "HTTP 403" from
+                # the good client was replaced by a vague "format is not
+                # available" from a client that never had a chance.
+                last_err = last_err or e
                 continue
             except Exception as e:
                 raise DownloadError(f"Unexpected error: {e}\n\n{traceback.format_exc()}") from e
@@ -363,7 +405,7 @@ class Downloader:
             except yt_dlp.utils.DownloadError as e:
                 if "Cancelled" in str(e):
                     raise
-                last_err = e
+                last_err = last_err or e
                 continue
             except Exception as e:
                 raise DownloadError(f"Unexpected error: {e}\n\n{traceback.format_exc()}") from e

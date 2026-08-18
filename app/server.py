@@ -18,6 +18,7 @@ from app.downloader import (Downloader, DownloadError, AuthRequired,
                             StreamsUnavailable, PlaylistError,
                             export_cookies_from_browser, installed_browsers,
                             _parse_formats)
+from app.downloader import has_session_cookies
 from app import cleanup
 from app import converter
 from app import transcriber
@@ -87,6 +88,10 @@ def _refresh_cookies():
     browser = _config().get("cookie_browser")
     if not browser:
         return False
+    if browser == "file":
+        # A jar the user supplied by hand must never be overwritten by a browser
+        # export they chose weeks earlier.
+        return False
     if browser == "signin":
         # The sign-in window is not silent, so this cannot re-open it. Re-reading
         # the profile is still worth a try: the session there often outlives the
@@ -106,7 +111,10 @@ def _refresh_cookies():
 
 
 def _make_dl():
-    cookies = COOKIES_PATH if os.path.exists(COOKIES_PATH) else None
+    # Only send a jar that proves a signed-in account. Anything else is a
+    # visitor id, and handing YouTube one that has already been throttled makes
+    # the block stick instead of lifting it.
+    cookies = COOKIES_PATH if has_session_cookies(COOKIES_PATH) else None
     return Downloader(_ffmpeg_path, cookies=cookies)
 
 
@@ -201,10 +209,11 @@ def analyze():
 
 @app.route("/api/cookies/status", methods=["GET"])
 def cookies_status():
-    has_upload = os.path.exists(COOKIES_PATH)
+    # "Connected" has to mean the session works, not that a file exists.
+    valid = has_session_cookies(COOKIES_PATH)
     return jsonify({
-        "loaded": has_upload,
-        "method": "uploaded" if has_upload else None,
+        "loaded": valid,
+        "method": (_config().get("cookie_browser") or "uploaded") if valid else None,
     })
 
 
@@ -310,6 +319,12 @@ def export_cookies():
     try:
         os.makedirs(os.path.dirname(COOKIES_PATH), exist_ok=True)
         export_cookies_from_browser(browser, COOKIES_PATH)
+        if not has_session_cookies(COOKIES_PATH):
+            os.remove(COOKIES_PATH)
+            return jsonify({"ok": False,
+                            "reason": f"{browser.capitalize()} has no YouTube session. "
+                                      "Sign in to YouTube there first, or use the "
+                                      "sign-in window."}), 400
         # Remembering the choice is what lets _refresh_cookies heal an expiry
         # later without asking again.
         cfg = _config()
@@ -332,6 +347,19 @@ def upload_cookies():
         return jsonify({"ok": False, "reason": "No file"}), 400
     os.makedirs(os.path.dirname(COOKIES_PATH), exist_ok=True)
     f.save(COOKIES_PATH)
+    if not has_session_cookies(COOKIES_PATH):
+        os.remove(COOKIES_PATH)
+        return jsonify({"ok": False,
+                        "reason": "That file has no YouTube session in it. Export it "
+                                  "while signed in to YouTube."}), 400
+    cfg = _config()
+    cfg["cookie_browser"] = "file"
+    try:
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+        with open(CONFIG_PATH, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2)
+    except OSError:
+        pass
     return jsonify({"ok": True})
 
 

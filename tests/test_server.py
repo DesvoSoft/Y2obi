@@ -18,6 +18,7 @@ import tests  # noqa: E402,F401
 
 from app import server as srv
 from app import transcriber
+from app.downloader import has_session_cookies
 
 TOKEN = "test-token-abcdefghijklmnop"
 
@@ -592,8 +593,15 @@ class SessionSelfHealing(unittest.TestCase):
         srv.export_cookies_from_browser = boom
         self.assertFalse(srv._refresh_cookies())
 
+    @staticmethod
+    def _write_session_jar(path):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("# Netscape HTTP Cookie File" + chr(10))
+            f.write(chr(9).join([".youtube.com", "TRUE", "/", "TRUE", "0", "__Secure-1PSID", "abc123"]) + chr(10))
+
     def test_choosing_a_browser_remembers_it(self):
-        srv.export_cookies_from_browser = lambda b, p: open(p, "w").close()
+        srv.export_cookies_from_browser = self._write_session_jar and (
+            lambda b, p: self._write_session_jar(p))
         r = self.c.post("/api/cookies/export", json={"browser": "firefox"})
         self.assertTrue(r.get_json()["ok"])
         import json as _json
@@ -638,3 +646,69 @@ class SessionSelfHealing(unittest.TestCase):
             self.assertTrue(r.get_json()["needs_cookies"])
         finally:
             srv._make_dl = real
+
+
+class JarValidation(unittest.TestCase):
+    """A jar without a session is worse than no jar: sending a visitor id that
+    YouTube has already throttled makes the block stick."""
+
+    def setUp(self):
+        self._saved = srv._session_token
+        self._cookies, self._config = srv.COOKIES_PATH, srv.CONFIG_PATH
+        srv._session_token = None
+        self.dir = tempfile.mkdtemp(prefix="y2obi_t_")
+        srv.COOKIES_PATH = os.path.join(self.dir, "cookies.txt")
+        srv.CONFIG_PATH = os.path.join(self.dir, "config.json")
+        self.c = srv.app.test_client()
+        self._export = srv.export_cookies_from_browser
+
+    def tearDown(self):
+        srv.export_cookies_from_browser = self._export
+        srv._session_token = self._saved
+        srv.COOKIES_PATH, srv.CONFIG_PATH = self._cookies, self._config
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _jar(self, *names):
+        with open(srv.COOKIES_PATH, "w", encoding="utf-8") as f:
+            f.write("# Netscape HTTP Cookie File" + chr(10))
+            for n in names:
+                f.write(chr(9).join([".youtube.com", "TRUE", "/", "TRUE", "0", n, "v"]) + chr(10))
+
+    def test_anonymous_cookies_are_not_a_session(self):
+        # Exactly what a first visit leaves behind, and what a stale jar holds.
+        self._jar("VISITOR_INFO1_LIVE", "YSC", "NID", "PREF")
+        self.assertFalse(has_session_cookies(srv.COOKIES_PATH))
+
+    def test_a_session_cookie_counts(self):
+        self._jar("VISITOR_INFO1_LIVE", "__Secure-1PSID")
+        self.assertTrue(has_session_cookies(srv.COOKIES_PATH))
+
+    def test_a_missing_jar_is_not_a_session(self):
+        self.assertFalse(has_session_cookies(srv.COOKIES_PATH))
+        self.assertFalse(has_session_cookies(None))
+
+    def test_status_reports_not_connected_for_an_anonymous_jar(self):
+        self._jar("VISITOR_INFO1_LIVE", "YSC")
+        self.assertFalse(self.c.get("/api/cookies/status").get_json()["loaded"])
+
+    def test_an_anonymous_export_is_rejected_and_discarded(self):
+        srv.export_cookies_from_browser = lambda b, p: self._jar("VISITOR_INFO1_LIVE")
+        r = self.c.post("/api/cookies/export", json={"browser": "firefox"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("no YouTube session", r.get_json()["reason"])
+        self.assertFalse(os.path.exists(srv.COOKIES_PATH))
+
+    def test_a_manual_jar_is_never_overwritten_by_the_heal(self):
+        import json as _json
+        with open(srv.CONFIG_PATH, "w", encoding="utf-8") as f:
+            _json.dump({"cookie_browser": "file"}, f)
+        called = []
+        srv.export_cookies_from_browser = lambda b, p: called.append(b)
+        self.assertFalse(srv._refresh_cookies())
+        self.assertEqual(called, [])
+
+    def test_the_downloader_gets_no_jar_when_there_is_no_session(self):
+        self._jar("VISITOR_INFO1_LIVE", "YSC")
+        self.assertIsNone(srv._make_dl().cookies)
+        self._jar("__Secure-1PSID")
+        self.assertEqual(srv._make_dl().cookies, srv.COOKIES_PATH)
