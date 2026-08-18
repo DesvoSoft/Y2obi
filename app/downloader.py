@@ -40,6 +40,16 @@ class DownloadError(Exception):
     pass
 
 
+class AuthRequired(DownloadError):
+    """YouTube wants a signed-in session. Loading cookies is the whole fix.
+
+    Kept separate from DownloadError so the UI can offer the one action that
+    actually helps instead of showing a wall of yt-dlp text that ends in
+    "use --cookies-from-browser", which means nothing to someone who just wants
+    a video.
+    """
+
+
 class PlaylistError(DownloadError):
     pass
 
@@ -85,6 +95,62 @@ def export_cookies_from_browser(browser, dest_path):
         raise
     except Exception as e:
         raise DownloadError(f"Cookie export failed: {e}") from e
+
+
+# Phrases yt-dlp surfaces when the only fix is a signed-in session. Matched
+# loosely because the wording drifts between yt-dlp releases.
+_AUTH_MARKERS = (
+    "not a bot",
+    "sign in to confirm",
+    "confirm your age",
+    "cookies-from-browser",
+    "--cookies",
+    "login required",
+    "requires authentication",
+    "video is private",
+    "private video",
+    "members-only",
+    "age-restricted",
+)
+
+
+def looks_like_auth_error(text):
+    low = str(text).lower()
+    return any(m in low for m in _AUTH_MARKERS)
+
+
+# Where each browser keeps its profile, used to offer only browsers that are
+# actually installed rather than a list of four that mostly fail.
+_BROWSER_PROFILES = {
+    "firefox": ("APPDATA", os.path.join("Mozilla", "Firefox", "Profiles")),
+    "edge": ("LOCALAPPDATA", os.path.join("Microsoft", "Edge", "User Data")),
+    "chrome": ("LOCALAPPDATA", os.path.join("Google", "Chrome", "User Data")),
+    "brave": ("LOCALAPPDATA", os.path.join("BraveSoftware", "Brave-Browser", "User Data")),
+}
+
+BROWSER_LABELS = {"firefox": "Firefox", "edge": "Edge", "chrome": "Chrome",
+                  "brave": "Brave"}
+
+
+def installed_browsers():
+    """Browsers present on this machine, with whether they are running.
+
+    Firefox first: it is the only one whose cookie store yt-dlp can read while
+    the browser is open. The Chromium ones hold a lock on theirs.
+    """
+    found = []
+    for name in ("firefox", "edge", "chrome", "brave"):
+        env, rel = _BROWSER_PROFILES[name]
+        root = os.environ.get(env)
+        if not root or not os.path.isdir(os.path.join(root, rel)):
+            continue
+        found.append({
+            "name": name,
+            "label": BROWSER_LABELS[name],
+            "running": _is_browser_running(name),
+            "needs_close": name in _CHROMIUM_COOKIE_DB,
+        })
+    return found
 
 
 def _parse_formats(info):
@@ -134,7 +200,14 @@ class Downloader:
         opts = {
             'quiet': True,
             'no_warnings': True,
-            'socket_timeout': 30,
+            # Bounded on purpose. Analyze is synchronous and the window shows
+            # "Analyzing..." the whole time, so a long retry storm behind a bot
+            # check is indistinguishable from a frozen app. Three player clients
+            # at 15 s and one retry each fails in under two minutes worst case,
+            # and then the UI can offer the fix.
+            'socket_timeout': 15,
+            'retries': 1,
+            'extractor_retries': 1,
             'extract_flat': False,
             'noplaylist': True,
         }
@@ -153,6 +226,15 @@ class Downloader:
             except Exception as e:
                 raise DownloadError(f"Unexpected error: {e}\n\n{traceback.format_exc()}") from e
         if info is None:
+            # Every player client failed. If the reason is a signed-in session,
+            # say so in one line instead of forwarding yt-dlp's wall of text:
+            # the user cannot act on "use --cookies-from-browser", but they can
+            # act on a button that loads their browser's cookies.
+            if looks_like_auth_error(last_err):
+                raise AuthRequired(
+                    "YouTube wants to confirm you are signed in before it hands "
+                    "this video over."
+                ) from last_err
             raise DownloadError(f"YouTube error: {last_err}") from last_err
 
         if info and info.get('_type') == 'playlist':
@@ -251,6 +333,11 @@ class Downloader:
             # Extraction worked, so another client will not help.
             raise DownloadError(f"No file — {what} did not produce output")
 
+        if looks_like_auth_error(last_err):
+            raise AuthRequired(
+                "YouTube wants to confirm you are signed in before it hands "
+                "this video over."
+            ) from last_err
         raise DownloadError(f"YouTube download error: {last_err}") from last_err
 
     def download_mp4(self, url, output_dir, quality="Best"):

@@ -13,7 +13,9 @@ import uuid
 from flask import Flask, request, jsonify, send_file, send_from_directory
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from app.downloader import Downloader, DownloadError, PlaylistError, export_cookies_from_browser, _parse_formats
+from app.downloader import (Downloader, DownloadError, AuthRequired, PlaylistError,
+                            export_cookies_from_browser, installed_browsers,
+                            _parse_formats)
 from app import cleanup
 from app import converter
 from app import transcriber
@@ -116,6 +118,11 @@ def analyze():
         info = _make_dl().get_info(url)
     except PlaylistError as e:
         return jsonify({"error": str(e), "playlist": True}), 400
+    except AuthRequired as e:
+        # The page turns this into one-click buttons for the browsers actually
+        # installed, rather than sending the user hunting through settings.
+        return jsonify({"error": str(e), "needs_cookies": True,
+                        "browsers": installed_browsers()}), 400
     except DownloadError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
@@ -157,6 +164,12 @@ def cookies_status():
         "loaded": has_upload,
         "method": "uploaded" if has_upload else None,
     })
+
+
+@app.route("/api/cookies/browsers", methods=["GET"])
+def cookie_browsers():
+    """Which browsers are installed, and which are holding their cookie DB open."""
+    return jsonify({"browsers": installed_browsers()})
 
 
 @app.route("/api/cookies/export", methods=["POST"])
@@ -550,7 +563,8 @@ def _run_transcribe(task_id, src, model, lang, is_file=False):
             _set(task_id, cancelled=True, status="Cancelled", done=True,
                  _done_at=time.time())
         else:
-            _set(task_id, error=msg, status="Error", done=True, _done_at=time.time())
+            _set(task_id, error=msg, status="Error", done=True,
+                 needs_cookies=isinstance(e, AuthRequired), _done_at=time.time())
     finally:
         _set(task_id, _tr=None, _dl=None)
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -707,7 +721,9 @@ def start_download():
                     if "Cancelled" in msg:
                         t.update(cancelled=True, status="Cancelled", done=True, _done_at=time.time())
                     else:
-                        t.update(error=msg, status="Error", done=True, _done_at=time.time())
+                        t.update(error=msg, status="Error", done=True,
+                                 needs_cookies=isinstance(e, AuthRequired),
+                                 _done_at=time.time())
 
     threading.Thread(target=_run, daemon=True).start()
     return jsonify({"task_id": task_id})
@@ -731,6 +747,9 @@ def progress(task_id):
         "error": task.get("error"),
         "already_exists": task.get("already_exists", False),
     }
+    if task.get("needs_cookies"):
+        resp["needs_cookies"] = True
+        resp["browsers"] = installed_browsers()
     if task["done"] and task.get("path") and not task.get("error") and not task["cancelled"]:
         resp["file_url"] = f"/api/file/{task_id}"
         resp["filename"] = os.path.basename(task["path"])

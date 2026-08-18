@@ -39,6 +39,14 @@ from flask import Response  # noqa: E402
 
 server._static_dir = os.path.join(ROOT, "desktop")
 
+# Mark the sandbox as already onboarded, otherwise the welcome modal covers
+# every state you are trying to look at. /shot/<theme>/onboarding shows it.
+os.makedirs(os.path.dirname(server.CONFIG_PATH), exist_ok=True)
+if not os.path.exists(server.CONFIG_PATH):
+    import json as _json
+    with open(server.CONFIG_PATH, "w", encoding="utf-8") as _f:
+        _json.dump({"onboarded": True}, _f)
+
 STUB = """
 <style>*, *::before, *::after { transition: none !important; animation: none !important; }</style>
 <script>window.pywebview = { api: { pick_file: () => Promise.resolve(null) } };</script>
@@ -50,7 +58,13 @@ window.addEventListener('load', () => setTimeout(() => {
   const $ = id => document.getElementById(id);
   const STATE = 'S_TATE';
   if (STATE === 'settings') { $('settingsBtn').click(); return; }
+  if (STATE === 'onboarding') { return; }
   if (STATE === 'focus') { document.querySelectorAll('#qualityChips .q-chip')[2].focus(); return; }
+  if (STATE === 'botfix') {
+    $('urlInput').value = 'https://www.youtube.com/watch?v=BOTCHECK';
+    $('analyzeBtn').click();
+    return;
+  }
   if (STATE === 'file' || STATE === 'fileaudio') {
     document.querySelector('.src-tab[data-src="file"]').click();
     const audio = STATE === 'fileaudio';
@@ -119,6 +133,31 @@ TXT_BLOCK = """
   $('statusText').textContent = 'Transcribing part 2/4...';
   $('speedText').textContent = '12m 30s';
 """
+
+
+_real_analyze = server.app.view_functions["analyze"]
+
+
+def analyze_or_fake():
+    """Answer the way YouTube does when its bot check trips, for one magic URL.
+
+    Reaching that state for real means getting rate-limited by YouTube, which is
+    not something to depend on while working on the recovery UI. Any other URL
+    goes to the real extractor untouched.
+    """
+    from flask import jsonify, request
+    from app.downloader import installed_browsers
+    if "BOTCHECK" in ((request.json or {}).get("url") or ""):
+        return jsonify({
+            "error": "YouTube wants to confirm you are signed in before it hands "
+                     "this video over.",
+            "needs_cookies": True,
+            "browsers": installed_browsers(),
+        }), 400
+    return _real_analyze()
+
+
+server.app.view_functions["analyze"] = analyze_or_fake
 
 
 @server.app.route("/shot/<theme>")

@@ -343,6 +343,18 @@
     font-size: 13px; color: var(--bad-fg); display: none; word-break: break-word;
   }
   .error-msg.visible { display: block; }
+  .error-actions { display: none; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
+  .error-actions.visible { display: flex; }
+  .error-actions .fix-btn {
+    height: 32px; padding: 0 14px; border-radius: 9px; cursor: pointer;
+    font-size: 12.5px; font-weight: 700; font-family: inherit;
+    background: var(--vitra-color-accent); color: var(--on-accent); border: none;
+  }
+  .error-actions .fix-btn.ghost {
+    background: transparent; color: var(--bad-fg); border: 1px solid var(--bad-bd);
+  }
+  .error-actions .fix-btn:disabled { opacity: .55; cursor: default; }
+  .error-hint { flex-basis: 100%; font-size: 11.5px; color: var(--faint); line-height: 1.45; }
 
   .toast {
     position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
@@ -516,6 +528,7 @@
 
   <div id="errorMsg" class="error-msg">
     <span id="errorText"></span>
+    <div class="error-actions" id="errorActions"></div>
   </div>
 
   <div id="infoCard" class="panel info-card">
@@ -639,6 +652,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const ANALYZE_BTN  = $('analyzeBtn');
   const ERROR_MSG    = $('errorMsg');
   const ERROR_TEXT   = $('errorText');
+  const ERROR_ACTIONS= $('errorActions');
   const INFO_CARD    = $('infoCard');
   const THUMB_PH     = $('thumbPlaceholder');
   const THUMB_IMG    = $('thumbImg');
@@ -1001,7 +1015,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="ob-step">
         <h4>Accuracy</h4>
         ${modelCards}
-        <div class="ob-note">You can change this later, and download the other sizes, under <b>Models</b> in the footer.</div>
+        <div class="ob-note">You can change this later, and download the other sizes, in <b>Settings</b>.</div>
       </div>
       <div class="ob-step">
         <h4>Processing</h4>
@@ -1498,7 +1512,7 @@ document.addEventListener('DOMContentLoaded', () => {
     fd.append('file', file);
     api('/api/cookies', { method: 'POST', body: fd })
       .then(r => r.json())
-      .then(d => { if (d.ok) { setCookieLabel('file'); toast('Cookies loaded'); } })
+      .then(d => { if (d.ok) { setCookieLabel('file'); hideError(); toast('Cookies loaded'); } })
       .catch(() => toast('Cookie upload failed'));
   });
 
@@ -1519,11 +1533,72 @@ document.addEventListener('DOMContentLoaded', () => {
   function showError(msg, details) {
     lastError = details || msg;
     ERROR_TEXT.textContent = msg;
+    ERROR_ACTIONS.innerHTML = '';
+    ERROR_ACTIONS.classList.remove('visible');
     ERROR_MSG.classList.add('visible');
     DETAILS_GROUP.style.display = details ? 'flex' : 'none';
   }
+
+  // "Sign in to confirm you're not a bot" is the one error with a single known
+  // fix, so the fix goes in the error box: a button per browser that is actually
+  // installed, and the action is retried automatically once cookies are in.
+  function showAuthError(msg, browsers, retry) {
+    showError(msg);
+    ERROR_ACTIONS.classList.add('visible');
+    const usable = (browsers || []).filter(b => !(b.needs_close && b.running));
+    const blocked = (browsers || []).filter(b => b.needs_close && b.running);
+
+    usable.forEach(b => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'fix-btn';
+      btn.textContent = 'Use ' + b.label + ' cookies';
+      btn.onclick = () => {
+        ERROR_ACTIONS.querySelectorAll('button').forEach(x => x.disabled = true);
+        btn.textContent = 'Reading ' + b.label + '...';
+        api('/api/cookies/export', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({browser: b.name}),
+        })
+          .then(r => r.json())
+          .then(d => {
+            if (!d.ok) { showAuthError(d.reason || 'Could not read those cookies.', browsers, retry); return; }
+            setCookieLabel(b.name);
+            hideError();
+            toast('Cookies loaded from ' + b.label);
+            if (retry) retry();
+          })
+          .catch(() => showAuthError('Could not read those cookies.', browsers, retry));
+      };
+      ERROR_ACTIONS.appendChild(btn);
+    });
+
+    const upload = document.createElement('button');
+    upload.type = 'button';
+    upload.className = 'fix-btn ghost';
+    upload.textContent = 'Upload cookies.txt';
+    upload.onclick = () => COOKIE_INPUT.click();
+    ERROR_ACTIONS.appendChild(upload);
+
+    const hint = document.createElement('div');
+    hint.className = 'error-hint';
+    if (blocked.length) {
+      hint.textContent = 'Close ' + blocked.map(b => b.label).join(' and ')
+        + ' completely and try again to use its cookies: it keeps its cookie file locked while open.';
+    } else if (!usable.length) {
+      hint.textContent = 'No supported browser found. Export a cookies.txt with a browser '
+        + 'extension and upload it here.';
+    } else {
+      hint.textContent = 'Nothing is uploaded anywhere. The cookies stay on this machine and '
+        + 'are only sent to YouTube, exactly as your browser sends them.';
+    }
+    ERROR_ACTIONS.appendChild(hint);
+  }
+
   function hideError() {
     ERROR_MSG.classList.remove('visible');
+    ERROR_ACTIONS.classList.remove('visible');
+    ERROR_ACTIONS.innerHTML = '';
     DETAILS_GROUP.style.display = 'none';
     lastError = null;
   }
@@ -1618,7 +1693,11 @@ document.addEventListener('DOMContentLoaded', () => {
     .then(r => r.json())
     .then(data => {
       setAnalyzing(false);
-      if (data.error) { showError(data.error, data.playlist ? 'Paste a single video URL, not a playlist.' : null); return; }
+      if (data.error) {
+        if (data.needs_cookies) { showAuthError(data.error, data.browsers, onAnalyze); }
+        else { showError(data.error, data.playlist ? 'Paste a single video URL, not a playlist.' : null); }
+        return;
+      }
       videoInfo = data;
       TITLE_TEXT.textContent = data.title;
       CHANNEL_TEXT.textContent = data.channel;
@@ -1692,7 +1771,10 @@ document.addEventListener('DOMContentLoaded', () => {
           SPEED_TEXT.textContent = '';
           toast('File already exists in ~/Downloads/Y2obi/');
         } else if (data.error) {
-          setDownloading(false); showError(data.error); PROGRESS_CARD.classList.remove('visible');
+          setDownloading(false);
+          PROGRESS_CARD.classList.remove('visible');
+          if (data.needs_cookies) showAuthError(data.error, data.browsers, () => startDownload(selectedFormat));
+          else showError(data.error);
         } else {
           setDownloading(false);
           const extras = data.extra_filenames || [];

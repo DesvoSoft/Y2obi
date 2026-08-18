@@ -151,6 +151,15 @@ ever its own. Deleting those three folders removes Y2obi completely.
 
 ## Cookie Support
 
+If YouTube asks Y2obi to confirm it isn't a bot, the app says so in plain words
+and puts the fix in the message itself: one button per browser you actually have
+installed. Click it and the download retries on its own. Nothing is uploaded
+anywhere; the cookies stay on your machine and are only sent to YouTube, exactly
+as your browser sends them.
+
+Chromium browsers (Edge, Chrome, Brave) keep their cookie file locked while
+open, so close the one you pick first. Firefox can be read while running.
+
 Some videos need you to be signed in (age-restricted or private ones). Open
 **Settings → Cookies** to export them from Firefox, Edge, Brave or Chrome, or
 to upload a `cookies.txt` by hand.

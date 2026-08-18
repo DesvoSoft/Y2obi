@@ -483,3 +483,67 @@ class ForceCpuFlag(unittest.TestCase):
         srv._device()
         import json as _json
         self.assertEqual(_json.load(open(srv.CONFIG_PATH))["device"], "gpu")
+
+
+class AuthErrorSurfacing(unittest.TestCase):
+    """"Sign in to confirm you're not a bot" has exactly one fix, so it must
+    arrive at the page as something the page can act on."""
+
+    def setUp(self):
+        self._saved = srv._session_token
+        srv._session_token = None
+        self.c = srv.app.test_client()
+        srv.tasks.clear()
+
+    def tearDown(self):
+        srv._session_token = self._saved
+        srv.tasks.clear()
+
+    def test_yt_dlp_phrasings_are_recognised(self):
+        from app.downloader import looks_like_auth_error
+        for text in (
+            "ERROR: [youtube] abc: Sign in to confirm you're not a bot. "
+            "Use --cookies-from-browser or --cookies for the authentication.",
+            "Sign in to confirm your age",
+            "This video is private",
+            "Join this channel to get access to members-only content",
+        ):
+            self.assertTrue(looks_like_auth_error(text), text[:40])
+
+    def test_ordinary_failures_are_not_mistaken_for_it(self):
+        from app.downloader import looks_like_auth_error
+        for text in ("Video unavailable", "HTTP Error 404: Not Found",
+                     "Unable to download webpage: timed out", ""):
+            self.assertFalse(looks_like_auth_error(text), text[:40])
+
+    def test_analyze_reports_the_fix_and_the_browsers(self):
+        from app import downloader as dl
+        real = srv._make_dl
+        class _Boom:
+            def get_info(self, url):
+                raise dl.AuthRequired("YouTube wants to confirm you are signed in.")
+        srv._make_dl = lambda: _Boom()
+        try:
+            r = self.c.post("/api/analyze", json={"url": "https://youtu.be/x"})
+            body = r.get_json()
+            self.assertEqual(r.status_code, 400)
+            self.assertTrue(body["needs_cookies"])
+            self.assertIsInstance(body["browsers"], list)
+            self.assertNotIn("--cookies", body["error"])
+        finally:
+            srv._make_dl = real
+
+    def test_a_failed_task_carries_the_flag(self):
+        srv.tasks["t"] = {"percent": 0, "speed": 0, "eta": 0, "status": "Error",
+                          "done": True, "cancelled": False, "path": None,
+                          "error": "signed in", "needs_cookies": True}
+        body = self.c.get("/api/progress/t").get_json()
+        self.assertTrue(body["needs_cookies"])
+        self.assertIn("browsers", body)
+
+    def test_browser_list_only_reports_installed_ones(self):
+        from app.downloader import installed_browsers
+        for b in installed_browsers():
+            self.assertIn(b["name"], ("firefox", "edge", "chrome", "brave"))
+            self.assertIn("running", b)
+            self.assertIn("needs_close", b)
