@@ -158,8 +158,15 @@ Y2obi remembers the browser and reconnects by itself when the session expires. N
 anywhere; the cookies stay on your machine and are only sent to YouTube, exactly
 as your browser sends them.
 
-Chromium browsers (Edge, Chrome, Brave) keep their cookie file locked while
-open, so close the one you pick first. Firefox can be read while running.
+**Edge, Chrome and Brave cannot be read at all**, and closing them does not
+help: since Chromium 127 they encrypt their cookie store with App-Bound
+Encryption, which ties the key to the browser's own executable so that no other
+program can decrypt it. That is not something Y2obi can work around.
+
+So Y2obi offers its own window instead. Pick **Sign in to YouTube**, sign in
+normally in the window that opens, close it, and the download continues. Firefox
+is still readable directly, and a `cookies.txt` exported with a browser extension
+works too.
 
 Some videos need you to be signed in (age-restricted or private ones). Open
 **Settings → Cookies** to export them from Firefox, Edge, Brave or Chrome, or
