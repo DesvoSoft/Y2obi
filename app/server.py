@@ -740,10 +740,7 @@ def start_download():
 
     def _run():
         dl = _make_dl()
-        with _lock:
-            t = tasks.get(task_id)
-            if t:
-                t["_dl"] = dl
+        _set(task_id, _dl=dl)
         dl.set_callbacks(progress=_progress_cb(task_id), status=_status_cb(task_id))
 
         def _go(d):
@@ -754,49 +751,24 @@ def start_download():
             return d.download_mp3(url, DOWNLOAD_DIR)
 
         try:
-            if fmt == "mp4":
-                path = dl.download_mp4(url, DOWNLOAD_DIR, quality)
-            elif fmt == "webm":
-                path = dl.download_webm(url, DOWNLOAD_DIR, quality)
-            else:
-                path = dl.download_mp3(url, DOWNLOAD_DIR)
-            with _lock:
-                t = tasks.get(task_id)
-                if t:
-                    t.update(path=path, done=True, percent=100, status="Complete", _done_at=time.time())
-        except BLOCKED:
-            # Same one silent retry the analyze route gets.
-            if _refresh_cookies():
-                try:
-                    _set(task_id, status="Reconnecting to YouTube...")
-                    path = _go(_make_dl())
-                    with _lock:
-                        t = tasks.get(task_id)
-                        if t:
-                            t.update(path=path, done=True, percent=100,
-                                     status="Complete", _done_at=time.time())
-                    return
-                except Exception as e2:
-                    e = e2
-            else:
-                e = sys.exc_info()[1]
-            with _lock:
-                t = tasks.get(task_id)
-                if t:
-                    t.update(error=str(e), status="Error", done=True,
-                             needs_cookies=True, _done_at=time.time())
-            return
+            try:
+                path = _go(dl)
+            except BLOCKED:
+                # One silent retry on a refreshed session, same as analyze: the
+                # browser the user approved has probably just expired.
+                if not _refresh_cookies():
+                    raise
+                _set(task_id, status="Reconnecting to YouTube...")
+                path = _go(_make_dl())
+            _set(task_id, path=path, done=True, percent=100, status="Complete",
+                 _done_at=time.time())
         except Exception as e:
-            msg = str(e)
-            with _lock:
-                t = tasks.get(task_id)
-                if t:
-                    if "Cancelled" in msg:
-                        t.update(cancelled=True, status="Cancelled", done=True, _done_at=time.time())
-                    else:
-                        t.update(error=msg, status="Error", done=True,
-                                 needs_cookies=isinstance(e, AuthRequired),
-                                 _done_at=time.time())
+            if "Cancelled" in str(e):
+                _set(task_id, cancelled=True, status="Cancelled", done=True,
+                     _done_at=time.time())
+            else:
+                _set(task_id, error=str(e), status="Error", done=True,
+                     needs_cookies=isinstance(e, BLOCKED), _done_at=time.time())
 
     threading.Thread(target=_run, daemon=True).start()
     return jsonify({"task_id": task_id})
