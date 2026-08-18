@@ -140,6 +140,11 @@ class LocalFileRoutes(unittest.TestCase):
 
 class ModelRoutes(unittest.TestCase):
     def setUp(self):
+        # These exercise route logic, not whisper. CI runs the suite before the
+        # binaries are downloaded, and the route refuses early without one, so
+        # the engine is stubbed as present.
+        self._whisper = srv.get_whisper_cli
+        srv.get_whisper_cli = lambda: "whisper-cli.exe"
         self._saved = srv._session_token
         self._models_dir = srv.MODELS_DIR
         self._config = srv.CONFIG_PATH
@@ -151,6 +156,7 @@ class ModelRoutes(unittest.TestCase):
         self.c = srv.app.test_client()
 
     def tearDown(self):
+        srv.get_whisper_cli = self._whisper
         srv._session_token = self._saved
         srv.MODELS_DIR = self._models_dir
         srv.CONFIG_PATH = self._config

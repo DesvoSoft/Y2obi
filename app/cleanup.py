@@ -57,8 +57,10 @@ def _removable(path):
 
 
 def _old_enough(path, min_age_s):
+    # >= so that min_age_s=0 means "no age requirement" instead of "must be at
+    # least one clock tick old", which is a coin flip on a fast machine.
     try:
-        return time.time() - os.path.getmtime(path) > min_age_s
+        return time.time() - os.path.getmtime(path) >= min_age_s
     except OSError:
         return False
 
