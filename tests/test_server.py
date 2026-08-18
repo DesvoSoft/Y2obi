@@ -1,0 +1,448 @@
+"""Route-level tests for app.server — Flask test client, no network, no yt-dlp.
+
+Run: python -m unittest discover tests
+"""
+import os
+import shutil
+import sys
+import tempfile
+import time
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Must precede any app import: it redirects the data roots to a sandbox.
+# `unittest discover tests` imports these as top-level modules, so the
+# package __init__ does not run on its own.
+import tests  # noqa: E402,F401
+
+from app import server as srv
+from app import transcriber
+
+TOKEN = "test-token-abcdefghijklmnop"
+
+
+class TokenGate(unittest.TestCase):
+    def setUp(self):
+        self._saved = srv._session_token
+        srv._session_token = TOKEN
+        self.c = srv.app.test_client()
+
+    def tearDown(self):
+        srv._session_token = self._saved
+
+    def test_page_itself_needs_no_token(self):
+        # The token is handed over through the page URL, so / must stay open —
+        # and it must not leak the token into the HTML it serves.
+        srv._static_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "desktop")
+        r = self.c.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(TOKEN.encode(), r.data)
+
+    def test_api_rejected_without_token(self):
+        self.assertEqual(self.c.get("/api/cookies/status").status_code, 403)
+
+    def test_api_rejected_with_wrong_token(self):
+        r = self.c.get("/api/cookies/status", headers={"X-Y2obi-Token": "nope"})
+        self.assertEqual(r.status_code, 403)
+
+    def test_api_accepted_with_header(self):
+        r = self.c.get("/api/cookies/status", headers={"X-Y2obi-Token": TOKEN})
+        self.assertEqual(r.status_code, 200)
+
+    def test_api_accepted_with_query_arg(self):
+        # /api/file is opened as a plain URL, so the query form has to work too.
+        self.assertEqual(self.c.get(f"/api/cookies/status?t={TOKEN}").status_code, 200)
+
+    def test_non_ascii_token_is_a_403_not_a_500(self):
+        r = self.c.get("/api/cookies/status", headers={"X-Y2obi-Token": "ñandú"})
+        self.assertEqual(r.status_code, 403)
+
+    def test_destructive_route_is_gated(self):
+        self.assertEqual(self.c.delete("/api/cookies").status_code, 403)
+
+    def test_gate_is_off_when_no_token_was_minted(self):
+        # Imported directly (tests, dev harness) the app stays open.
+        srv._session_token = None
+        self.assertEqual(self.c.get("/api/cookies/status").status_code, 200)
+
+
+class OpenFile(unittest.TestCase):
+    def setUp(self):
+        self._saved = srv._session_token
+        srv._session_token = None
+        self.c = srv.app.test_client()
+        srv.tasks.clear()
+
+    def tearDown(self):
+        srv._session_token = self._saved
+        srv.tasks.clear()
+
+    def test_unknown_task_is_404(self):
+        self.assertEqual(self.c.post("/api/open_file/nope").status_code, 404)
+
+    def test_task_without_a_path_is_404(self):
+        srv.tasks["t1"] = {"path": None, "done": True}
+        self.assertEqual(self.c.post("/api/open_file/t1").status_code, 404)
+
+    def test_vanished_file_is_404(self):
+        srv.tasks["t1"] = {"path": r"C:\definitely\not\here.mp4", "done": True}
+        self.assertEqual(self.c.post("/api/open_file/t1").status_code, 404)
+
+
+class LocalFileRoutes(unittest.TestCase):
+    """The local-file paths must never accept a path that is not a real file."""
+
+    def setUp(self):
+        self._saved = srv._session_token
+        srv._session_token = None
+        self.c = srv.app.test_client()
+        self.dir = tempfile.mkdtemp(prefix="y2obi_t_")
+        self.txt = os.path.join(self.dir, "notes.txt")
+        with open(self.txt, "w", encoding="utf-8") as f:
+            f.write("not media")
+
+    def tearDown(self):
+        srv._session_token = self._saved
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_analyze_file_needs_a_path(self):
+        self.assertEqual(self.c.post("/api/analyze_file", json={}).status_code, 400)
+
+    def test_analyze_file_rejects_missing_file(self):
+        r = self.c.post("/api/analyze_file", json={"path": os.path.join(self.dir, "no.mp4")})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("not found", r.get_json()["error"].lower())
+
+    def test_analyze_file_rejects_non_media(self):
+        r = self.c.post("/api/analyze_file", json={"path": self.txt})
+        self.assertEqual(r.status_code, 400)
+
+    def test_download_from_file_rejects_missing_file(self):
+        r = self.c.post("/api/download", json={
+            "source": "file", "path": os.path.join(self.dir, "no.mp4"), "format": "mp3"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_download_from_file_rejects_webm(self):
+        # VP9 re-encoding a local file takes hours for no gain over mp4.
+        media = os.path.join(self.dir, "clip.mp4")
+        open(media, "wb").close()
+        r = self.c.post("/api/download", json={
+            "source": "file", "path": media, "format": "webm"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("WEBM", r.get_json()["error"])
+
+    def test_url_mode_still_requires_a_url(self):
+        self.assertEqual(self.c.post("/api/download", json={"format": "mp4"}).status_code, 400)
+
+
+class ModelRoutes(unittest.TestCase):
+    def setUp(self):
+        self._saved = srv._session_token
+        self._models_dir = srv.MODELS_DIR
+        self._config = srv.CONFIG_PATH
+        srv._session_token = None
+        self.dir = tempfile.mkdtemp(prefix="y2obi_t_")
+        srv.MODELS_DIR = os.path.join(self.dir, "models")
+        srv.CONFIG_PATH = os.path.join(self.dir, "config.json")
+        os.makedirs(srv.MODELS_DIR)
+        self.c = srv.app.test_client()
+
+    def tearDown(self):
+        srv._session_token = self._saved
+        srv.MODELS_DIR = self._models_dir
+        srv.CONFIG_PATH = self._config
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _fake_model(self, name):
+        fname = transcriber.MODELS[name][0]
+        path = os.path.join(srv.MODELS_DIR, fname)
+        with open(path, "wb") as f:
+            f.write(b"x" * 2048)
+        return path
+
+    def test_unknown_model_cannot_be_deleted(self):
+        self.assertEqual(self.c.delete("/api/models/../../etc").status_code, 404)
+        self.assertEqual(self.c.delete("/api/models/nope").status_code, 404)
+
+    def test_unknown_model_cannot_be_downloaded(self):
+        self.assertEqual(self.c.post("/api/models/nope/download").status_code, 404)
+
+    def test_delete_removes_the_cached_file(self):
+        path = self._fake_model("tiny")
+        r = self.c.delete("/api/models/tiny")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.get_json()["ok"])
+        self.assertFalse(os.path.exists(path))
+        self.assertFalse(r.get_json()["model"]["installed"])
+
+    def test_delete_of_an_absent_model_is_not_an_error(self):
+        self.assertEqual(self.c.delete("/api/models/tiny").status_code, 200)
+
+    def test_config_roundtrip(self):
+        r = self.c.post("/api/config", json={"model": "small", "lang": "es"})
+        self.assertTrue(r.get_json()["ok"])
+        got = self.c.get("/api/config").get_json()
+        self.assertEqual((got["model"], got["lang"]), ("small", "es"))
+
+    def test_config_rejects_an_unknown_model(self):
+        self.assertEqual(self.c.post("/api/config", json={"model": "bogus"}).status_code, 400)
+
+    def test_config_rejects_a_malformed_language(self):
+        # Junk here would only surface as a whisper failure minutes into a run.
+        for bad in ("english", "e", "es-AR", "../x", ""):
+            self.assertEqual(self.c.post("/api/config", json={"lang": bad}).status_code,
+                             400, bad)
+
+    def test_config_accepts_auto_and_iso_codes(self):
+        for good in ("auto", "es", "EN", " ja "):
+            self.assertTrue(self.c.post("/api/config", json={"lang": good}).get_json()["ok"], good)
+
+    def test_corrupt_config_falls_back_to_defaults(self):
+        # A hand-edited or half-written file must never stop the app.
+        with open(srv.CONFIG_PATH, "w", encoding="utf-8") as f:
+            f.write("{not json")
+        got = self.c.get("/api/config").get_json()
+        self.assertEqual(got["model"], transcriber.DEFAULT_MODEL)
+
+    def test_every_catalogue_model_has_a_label(self):
+        for name in transcriber.MODELS:
+            self.assertIn(name, transcriber.MODEL_LABELS)
+
+    def test_a_running_download_is_not_started_twice(self):
+        # Closing and reopening the panel must re-attach, not start a second
+        # writer on the same <model>.part file.
+        srv.tasks["live"] = {"done": False}
+        srv._model_downloads["tiny"] = "live"
+        try:
+            r = self.c.post("/api/models/tiny/download")
+            self.assertEqual(r.status_code, 200)
+            body = r.get_json()
+            self.assertEqual(body["task_id"], "live")
+            self.assertTrue(body["already_running"])
+        finally:
+            srv.tasks.pop("live", None)
+            srv._model_downloads.pop("tiny", None)
+
+    def test_a_finished_download_does_not_block_a_new_one(self):
+        srv.tasks["old"] = {"done": True, "_done_at": time.time()}
+        srv._model_downloads["tiny"] = "old"
+        started = []
+        real = srv._run_model_download
+        srv._run_model_download = lambda task_id, name: started.append((task_id, name))
+        try:
+            body = self.c.post("/api/models/tiny/download").get_json()
+            self.assertNotEqual(body["task_id"], "old")
+            self.assertNotIn("already_running", body)
+        finally:
+            srv._run_model_download = real
+            srv.tasks.pop("old", None)
+            srv._model_downloads.pop("tiny", None)
+
+    def test_in_flight_downloads_are_reported(self):
+        srv.tasks["live"] = {"done": False}
+        srv._model_downloads["tiny"] = "live"
+        try:
+            d = self.c.get("/api/transcribe/models").get_json()
+            if d.get("available"):  # skipped on a build without whisper
+                self.assertEqual(d["downloading"].get("tiny"), "live")
+        finally:
+            srv.tasks.pop("live", None)
+            srv._model_downloads.pop("tiny", None)
+
+    def test_the_same_model_lock_is_reused(self):
+        self.assertIs(srv._model_lock("tiny"), srv._model_lock("tiny"))
+        self.assertIsNot(srv._model_lock("tiny"), srv._model_lock("base"))
+
+
+class OneJobAtATime(unittest.TestCase):
+    """A second media job would be orphaned: the page tracks one task id, so
+    nothing could cancel it while it kept burning CPU."""
+
+    def setUp(self):
+        self._saved = srv._session_token
+        srv._session_token = None
+        self.c = srv.app.test_client()
+        srv.tasks.clear()
+        self.dir = tempfile.mkdtemp(prefix="y2obi_t_")
+        self.media = os.path.join(self.dir, "clip.mp4")
+        open(self.media, "wb").close()
+
+    def tearDown(self):
+        srv._session_token = self._saved
+        srv.tasks.clear()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _busy(self, kind="media"):
+        srv.tasks["running"] = {"done": False, "kind": kind}
+
+    def test_second_media_job_is_refused(self):
+        self._busy()
+        r = self.c.post("/api/download", json={
+            "source": "file", "path": self.media, "format": "mp3"})
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.get_json()["busy_task_id"], "running")
+
+    def test_a_finished_job_does_not_block(self):
+        srv.tasks["old"] = {"done": True, "kind": "media", "_done_at": time.time()}
+        r = self.c.post("/api/download", json={"url": "", "format": "mp4"})
+        # Rejected for the empty URL, not for being busy.
+        self.assertEqual(r.status_code, 400)
+
+    def test_a_model_download_does_not_block_a_media_job(self):
+        # Fetching a model is network-only; it does not compete for the CPU.
+        self._busy(kind="model")
+        self.assertIsNone(srv._active_job())
+
+    def test_active_job_ignores_model_tasks(self):
+        srv.tasks["m"] = {"done": False, "kind": "model"}
+        srv.tasks["j"] = {"done": False, "kind": "media"}
+        self.assertEqual(srv._active_job(), "j")
+
+
+class DeviceAndOnboarding(unittest.TestCase):
+    """The CPU/GPU choice must never outlive the backend that made it possible."""
+
+    def setUp(self):
+        self._saved = srv._session_token
+        self._config = srv.CONFIG_PATH
+        srv._session_token = None
+        self.dir = tempfile.mkdtemp(prefix="y2obi_t_")
+        srv.CONFIG_PATH = os.path.join(self.dir, "config.json")
+        self.c = srv.app.test_client()
+
+    def tearDown(self):
+        srv._session_token = self._saved
+        srv.CONFIG_PATH = self._config
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_fresh_install_is_not_onboarded(self):
+        self.assertFalse(self.c.get("/api/config").get_json()["onboarded"])
+
+    def test_default_device_follows_availability(self):
+        # ~7x faster when it is there, so nobody should have to find a setting
+        # to get it — but a build without a backend must default to CPU.
+        real = transcriber.gpu_backend
+        try:
+            transcriber.gpu_backend = lambda cli: None
+            self.assertEqual(self.c.get("/api/config").get_json()["device"], "cpu")
+            transcriber.gpu_backend = lambda cli: {"name": "VULKAN", "devices": []}
+            self.assertEqual(self.c.get("/api/config").get_json()["device"], "gpu")
+        finally:
+            transcriber.gpu_backend = real
+
+    def test_gpu_index_falls_back_when_out_of_range(self):
+        real = transcriber.gpu_backend
+        transcriber.gpu_backend = lambda cli: {
+            "name": "VULKAN", "devices": [{"index": 0, "name": "A"}, {"index": 1, "name": "B"}]}
+        try:
+            self.c.post("/api/config", json={"gpu_index": 1})
+            self.assertEqual(self.c.get("/api/config").get_json()["gpu_index"], 1)
+            self.c.post("/api/config", json={"gpu_index": 7})
+            self.assertEqual(self.c.get("/api/config").get_json()["gpu_index"], 0)
+        finally:
+            transcriber.gpu_backend = real
+
+    def test_onboarded_flag_persists(self):
+        self.c.post("/api/config", json={"onboarded": True})
+        self.assertTrue(self.c.get("/api/config").get_json()["onboarded"])
+
+    def test_gpu_is_refused_without_a_gpu_backend(self):
+        real = transcriber.gpu_backend
+        transcriber.gpu_backend = lambda cli: None
+        try:
+            r = self.c.post("/api/config", json={"device": "gpu"})
+            self.assertEqual(r.status_code, 400)
+            self.assertIn("GPU", r.get_json()["reason"])
+        finally:
+            transcriber.gpu_backend = real
+
+    def test_gpu_is_accepted_when_a_backend_exists(self):
+        real = transcriber.gpu_backend
+        transcriber.gpu_backend = lambda cli: {"name": "VULKAN", "device": "Test GPU"}
+        try:
+            self.assertTrue(self.c.post("/api/config", json={"device": "gpu"}).get_json()["ok"])
+            self.assertEqual(self.c.get("/api/config").get_json()["device"], "gpu")
+        finally:
+            transcriber.gpu_backend = real
+
+    def test_a_stale_gpu_preference_falls_back_to_cpu(self):
+        # Saved on a build that had a GPU backend, then read on one that does not.
+        real = transcriber.gpu_backend
+        transcriber.gpu_backend = lambda cli: {"name": "VULKAN"}
+        try:
+            self.c.post("/api/config", json={"device": "gpu"})
+        finally:
+            transcriber.gpu_backend = real
+        transcriber.gpu_backend = lambda cli: None
+        try:
+            self.assertEqual(self.c.get("/api/config").get_json()["device"], "cpu")
+        finally:
+            transcriber.gpu_backend = real
+
+    def test_unknown_device_is_rejected(self):
+        self.assertEqual(self.c.post("/api/config", json={"device": "tpu"}).status_code, 400)
+
+
+class BackendProbe(unittest.TestCase):
+    def test_probe_without_a_binary_is_empty(self):
+        self.assertEqual(transcriber.probe_backends(None), [])
+        self.assertIsNone(transcriber.gpu_backend(None))
+
+    def test_parser_reads_the_loader_lines(self):
+        out = (
+            "load_backend: loaded CPU backend from /x/ggml-cpu-haswell.dll" + chr(10)
+            + "load_backend: loaded Vulkan backend from /x/ggml-vulkan.dll" + chr(10)
+        )
+        found = transcriber._BACKEND_RE.findall(out)
+        self.assertEqual([n for n, _ in found], ["CPU", "Vulkan"])
+
+    def test_real_binary_reports_at_least_cpu(self):
+        from app.binaries import get_whisper_cli
+        cli = get_whisper_cli()
+        if not cli:
+            self.skipTest("this build has no whisper")
+        names = [b["name"] for b in transcriber.probe_backends(cli)]
+        self.assertIn("CPU", names)
+
+
+class ReapTasks(unittest.TestCase):
+    def setUp(self):
+        srv.tasks.clear()
+
+    def tearDown(self):
+        srv.tasks.clear()
+
+    def test_stale_finished_task_is_dropped(self):
+        srv.tasks["old"] = {"done": True, "_done_at": time.time() - srv.TASK_TTL - 1}
+        srv._reap_tasks()
+        self.assertNotIn("old", srv.tasks)
+
+    def test_recent_finished_task_is_kept(self):
+        srv.tasks["new"] = {"done": True, "_done_at": time.time()}
+        srv._reap_tasks()
+        self.assertIn("new", srv.tasks)
+
+    def test_running_task_is_never_dropped(self):
+        srv.tasks["live"] = {"done": False}
+        srv._reap_tasks()
+        self.assertIn("live", srv.tasks)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class DataRootsAreSandboxed(unittest.TestCase):
+    """If this fails, the rest of the suite is writing into the real profile."""
+
+    def test_paths_point_at_the_sandbox(self):
+        sandbox = os.path.join(tempfile.gettempdir(), "y2obi_tests")
+        for path in (srv._APP_DATA, srv.DOWNLOAD_DIR, srv.MODELS_DIR, srv.CONFIG_PATH):
+            self.assertTrue(os.path.normcase(path).startswith(os.path.normcase(sandbox)),
+                            f"{path} escapes the sandbox")
+
+    def test_the_real_profile_is_not_referenced(self):
+        real = os.path.join(os.environ.get("APPDATA", "!none"), "Y2obi")
+        self.assertNotEqual(os.path.normcase(srv._APP_DATA), os.path.normcase(real))

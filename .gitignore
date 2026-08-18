@@ -10,8 +10,13 @@ venv/
 .env
 *.egg
 
-# FFmpeg binary (bundled into the exe at build time, see build.spec)
-core/
+# Bundled binaries (fetched at build time, see build.spec and the release workflow)
+# Excluding core/* rather than core/ is deliberate: git cannot re-include a file
+# inside an excluded directory, and the pinned manifest has to be in the repo.
+core/*
+!core/whisper/
+core/whisper/*
+!core/whisper/MANIFEST.json
 
 # Cookies (sensitive, stored per-user in %APPDATA%/Y2obi)
 app/cookies/

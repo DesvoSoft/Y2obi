@@ -3,6 +3,7 @@ import os
 import tkinter as tk
 from tkinter import messagebox
 import threading
+import shutil
 import urllib.request
 import subprocess
 import tempfile
@@ -33,11 +34,77 @@ def _webview2_installed():
 
 def _install_webview2(progress_cb):
     progress_cb("Downloading WebView2 runtime...")
-    tmp = tempfile.mktemp(suffix=".exe")
-    urllib.request.urlretrieve(WEBVIEW2_URL, tmp)
-    progress_cb("Installing WebView2 runtime...")
-    subprocess.run([tmp, "/silent", "/install"], check=True)
-    os.unlink(tmp)
+    # mkstemp, not mktemp: the installer is executed, so the file must be ours
+    # from the moment it exists.
+    fd, tmp = tempfile.mkstemp(suffix=".exe")
+    os.close(fd)
+    try:
+        with urllib.request.urlopen(WEBVIEW2_URL, timeout=60) as r, open(tmp, "wb") as f:
+            shutil.copyfileobj(r, f)
+        progress_cb("Installing WebView2 runtime...")
+        subprocess.run([tmp, "/silent", "/install"], check=True)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+# Held for the life of the process; releasing it would let a second copy start.
+_instance_mutex = None
+
+
+def _claim_single_instance():
+    """False if another Y2obi already owns the lock, after focusing its window.
+
+    Y2obi keeps one WebView2 profile in a fixed folder (see webview.start below)
+    so profiles cannot pile up in %TEMP%. WebView2 will not share a profile
+    between processes, so a second copy would hang on startup instead of failing
+    cleanly. One instance is the right behaviour for this app anyway.
+    """
+    global _instance_mutex
+    if os.name != "nt":
+        return True
+    import ctypes
+    k32 = ctypes.windll.kernel32
+    _instance_mutex = k32.CreateMutexW(None, False, "Y2obi.SingleInstance")
+    if k32.GetLastError() != 183:  # ERROR_ALREADY_EXISTS
+        return True
+    u32 = ctypes.windll.user32
+    hwnd = u32.FindWindowW(None, "Y2obi")
+    if hwnd:
+        u32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        u32.SetForegroundWindow(hwnd)
+    return False
+
+
+class Api:
+    """Exposed to the page as `window.pywebview.api`.
+
+    Only one thing genuinely needs the native layer: a real filesystem path.
+    WebView2, like any browser, refuses to give one out from `<input type=file>`,
+    and pushing a 2 GB video through the HTTP layer just to learn its name would
+    be absurd. So the picker lives here and hands the path back; the server then
+    reads the file straight off disk.
+    """
+
+    def __init__(self):
+        self.window = None
+
+    def pick_file(self):
+        # Imported here, not at module scope: webview pulls in pythonnet/CLR and
+        # the splash screen has to be up before that cost is paid.
+        import webview
+        from app.converter import AUDIO_EXTS, VIDEO_EXTS
+        if not self.window:
+            return None
+        patterns = ";".join("*" + e for e in VIDEO_EXTS + AUDIO_EXTS)
+        result = self.window.create_file_dialog(
+            webview.OPEN_DIALOG,
+            allow_multiple=False,
+            file_types=(f"Audio and video ({patterns})", "All files (*.*)"),
+        )
+        return result[0] if result else None
 
 
 class FFmpegSplash:
@@ -85,17 +152,22 @@ class FFmpegSplash:
 
 
 def main():
+    if not _claim_single_instance():
+        return
     splash = FFmpegSplash()
-    result = {"path": None, "error": None}
+    result = {"path": None, "error": None, "stage": None}
 
     def _check():
+        stage = "WebView2 runtime"
         try:
             if not _webview2_installed():
                 _install_webview2(lambda m: splash.root.after(0, lambda msg=m: splash.update(msg)))
+            stage = "FFmpeg"
             from app.binaries import ensure_ffmpeg
             path = ensure_ffmpeg(progress_cb=lambda m: splash.root.after(0, lambda msg=m: splash.update(msg)))
             result["path"] = path
         except Exception as e:
+            result["stage"] = stage
             result["error"] = str(e)
 
     threading.Thread(target=_check, daemon=True).start()
@@ -109,11 +181,17 @@ def main():
             splash.close()
             root = tk.Tk()
             root.withdraw()
-            messagebox.showerror(
-                "FFmpeg Error",
-                f"Could not download FFmpeg:\n{result['error']}\n\n"
+            stage = result.get("stage") or "FFmpeg"
+            hint = (
                 "Install FFmpeg manually and add to PATH, or "
-                "place ffmpeg.exe in the 'core' folder.",
+                "place ffmpeg.exe in the 'core' folder."
+                if stage == "FFmpeg" else
+                "Install the Microsoft Edge WebView2 runtime manually, "
+                "then start Y2obi again."
+            )
+            messagebox.showerror(
+                f"{stage} Error",
+                f"Could not set up {stage}:\n{result['error']}\n\n{hint}",
             )
             root.destroy()
             sys.exit(1)
@@ -137,22 +215,45 @@ def main():
                  bg="#1a1a2e", fg="#e0e0e0").pack(expand=True)
         loading.update()
 
-        port = start_server(ffmpeg_path, DESKTOP_DIR)
-        url = f"http://127.0.0.1:{port}"
+        # The token is handed to the page through the URL; the page sends it back
+        # as a header on every API call. See _require_token in app/server.py.
+        port, token = start_server(ffmpeg_path, DESKTOP_DIR)
+        url = f"http://127.0.0.1:{port}/?t={token}"
 
         loading.destroy()
         splash_root.destroy()
 
         import webview
-        webview.create_window(
+        # Sweep what a killed or crashed earlier run left in %TEMP%. Each
+        # abandoned onefile payload is ~150 MB.
+        try:
+            from app.cleanup import sweep_temp
+            n, freed = sweep_temp()
+            if n:
+                print(f"[Y2obi] cleaned {n} leftover temp dirs ({freed / 1e6:.0f} MB)")
+        except Exception:
+            pass
+
+        # Sized so the full stack (info card + every option row + progress) fits
+        # without scrolling; the page scrolls if the user shrinks it below this.
+        api = Api()
+        api.window = webview.create_window(
             "Y2obi",
             url,
-            width=740,
-            height=640,
-            min_size=(620, 520),
+            width=940,
+            height=780,
+            min_size=(700, 560),
             resizable=True,
+            js_api=api,
         )
-        webview.start()
+        # A fixed profile directory instead of pywebview's default private mode:
+        # private mode makes a fresh temp profile per launch and only removes it
+        # on a clean exit, so every kill leaves another ~12 MB EBWebView folder
+        # behind. One reusable folder cannot pile up.
+        storage = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()),
+                               "Y2obi", "webview")
+        os.makedirs(storage, exist_ok=True)
+        webview.start(private_mode=False, storage_path=storage)
 
     splash.root.after(100, _poll)
     splash.root.mainloop()

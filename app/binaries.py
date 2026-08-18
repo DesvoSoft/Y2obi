@@ -1,6 +1,8 @@
 import os
 import sys
+import time
 import zipfile
+import urllib.error
 import urllib.request
 import shutil
 import tempfile
@@ -22,6 +24,35 @@ def _get_core_dir():
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, "core")
 
+def _fetch(url, dest, progress_cb=None, retries=3):
+    """Download `url` to `dest` with a socket timeout and retries.
+
+    urlretrieve has no timeout, so a stalled connection used to hang the splash
+    screen forever with no way out but killing the app.
+    """
+    last_err = None
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as r, open(dest, "wb") as f:
+                total = int(r.headers.get("Content-Length") or 0)
+                got = 0
+                while True:
+                    buf = r.read(1 << 20)
+                    if not buf:
+                        break
+                    f.write(buf)
+                    got += len(buf)
+                    if progress_cb and total:
+                        progress_cb(f"Downloading FFmpeg... {min(got / total * 100, 100):.0f}%")
+            return
+        except (urllib.error.URLError, OSError, TimeoutError) as e:
+            last_err = e
+            if progress_cb and attempt < retries - 1:
+                progress_cb(f"Download interrupted, retrying ({attempt + 1}/{retries - 1})...")
+            time.sleep(2 * (attempt + 1))
+    raise OSError(f"Download failed after {retries} attempts: {last_err}")
+
+
 def _download_ffmpeg(dest, progress_cb=None):
     tmp_path = None
     try:
@@ -31,12 +62,7 @@ def _download_ffmpeg(dest, progress_cb=None):
         if progress_cb:
             progress_cb("Downloading FFmpeg (first run only)...")
 
-        def report(bcount, bsize, total):
-            if progress_cb and total > 0:
-                pct = min(bcount * bsize / total * 100, 100)
-                progress_cb(f"Downloading FFmpeg... {pct:.0f}%")
-
-        urllib.request.urlretrieve(FFMPEG_URL, tmp_path, reporthook=report)
+        _fetch(FFMPEG_URL, tmp_path, progress_cb)
 
         if progress_cb:
             progress_cb("Extracting FFmpeg...")
@@ -53,6 +79,28 @@ def _download_ffmpeg(dest, progress_cb=None):
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+def get_whisper_cli():
+    """whisper-cli.exe for transcription, or None if this build has no whisper.
+
+    Same resolution order as ffmpeg: onefile payload first, then core/ next to
+    the exe. Never downloaded — the ggml DLLs must sit beside the exe, so a
+    partial fetch would be worse than no feature at all.
+    """
+    name = "whisper-cli.exe" if os.name == "nt" else "whisper-cli"
+
+    meipass = getattr(sys, '_MEIPASS', None)
+    if meipass:
+        path = os.path.join(meipass, "core", "whisper", name)
+        if os.path.exists(path):
+            return path
+
+    path = os.path.join(_get_core_dir(), "whisper", name)
+    if os.path.exists(path):
+        return path
+
+    return shutil.which("whisper-cli")
+
 
 def ensure_ffmpeg(progress_cb=None):
     bundled = _get_bundled_ffmpeg()

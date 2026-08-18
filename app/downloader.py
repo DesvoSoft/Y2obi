@@ -30,6 +30,11 @@ QUALITY_MAP_WEBM = {
 # Audio format: m4a DASH preferred, fallback to any audio, last resort muxed 360p (format 18 = no DASH/no PO token)
 AUDIO_FORMAT = "bestaudio/best"
 
+# Player clients tried in order, for both analyze and download. They must stay
+# the same ladder: pinning downloads to the first pair alone made any video that
+# only resolved via tv_embedded/web analyze fine and then fail at download.
+PLAYER_CLIENTS = (['android_vr', 'mweb'], ['tv_embedded'], ['web'])
+
 
 class DownloadError(Exception):
     pass
@@ -39,41 +44,11 @@ class PlaylistError(DownloadError):
     pass
 
 
-def _find_firefox_cookies():
-    roots = [
-        os.path.expandvars(r"%APPDATA%\Mozilla\Firefox\Profiles"),
-        os.path.expandvars(r"%LOCALAPPDATA%\Packages\Mozilla.Firefox_n80bbvh6b1yt2\LocalCache\Roaming\Mozilla\Firefox\Profiles"),
-    ]
-    for root in roots:
-        if not os.path.isdir(root):
-            continue
-        for profile in os.listdir(root):
-            db = os.path.join(root, profile, "cookies.sqlite")
-            if os.path.isfile(db):
-                return True
-    return False
-
-
-# Chromium browsers lock their DB while running — cannot use cookiesfrombrowser auto
-# Only Firefox is safe for automatic cookie extraction
-_CHROMIUM_BROWSERS = {"edge", "brave", "chrome", "chromium", "opera", "vivaldi"}
-
 _CHROMIUM_COOKIE_DB = {
     "edge":   os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Network\Cookies"),
     "brave":  os.path.expandvars(r"%LOCALAPPDATA%\BraveSoftware\Brave-Browser\User Data\Default\Network\Cookies"),
     "chrome": os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data\Default\Network\Cookies"),
 }
-
-
-_FF_ONLY_AUTO = True  # Only Firefox supports auto-extraction without DPAPI issues
-
-
-def _detect_browser():
-    """File-existence check — no network calls, no browser launch.
-    Only returns Firefox: Chromium browsers lock their DB and fail DPAPI on Windows."""
-    if _find_firefox_cookies():
-        return "firefox"
-    return None
 
 
 def _is_browser_running(browser):
@@ -139,24 +114,13 @@ class Downloader:
     def __init__(self, ffmpeg_path="ffmpeg", cookies=None):
         self.ffmpeg_path = ffmpeg_path
         self.cookies = cookies
-        self._browser = None
         self._progress_cb = None
         self._status_cb = None
         self._cancel = False
 
-    def set_callbacks(self, progress=None, status=None, complete=None):
+    def set_callbacks(self, progress=None, status=None):
         self._progress_cb = progress
         self._status_cb = status
-
-    def _apply_cookies(self, opts):
-        if self.cookies:
-            opts["cookiefile"] = self.cookies
-        else:
-            if self._browser is None:
-                detected = _detect_browser()
-                self._browser = detected if detected else False
-            if self._browser:
-                opts["cookiesfrombrowser"] = (self._browser,)
 
     def cancel(self):
         self._cancel = True
@@ -167,20 +131,17 @@ class Downloader:
             opts["cookiefile"] = self.cookies
 
     def get_info(self, url):
-        has_cookies = bool(self.cookies and os.path.exists(self.cookies))
         opts = {
             'quiet': True,
             'no_warnings': True,
             'socket_timeout': 30,
             'extract_flat': False,
             'noplaylist': True,
-            'extractor_args': {'youtube': {'player_client': ['android_vr', 'mweb']}},
         }
         self._apply_cookies_file_only(opts)
-        print(f"[Y2obi] get_info cookies_exist={has_cookies}", flush=True)
         info = None
         last_err = None
-        for clients in (['android_vr', 'mweb'], ['tv_embedded'], ['web']):
+        for clients in PLAYER_CLIENTS:
             opts['extractor_args'] = {'youtube': {'player_client': clients}}
             try:
                 with yt_dlp.YoutubeDL(opts) as ydl:
@@ -221,8 +182,6 @@ class Downloader:
         return loc
 
     def _base_opts(self, template):
-        has_cookies = bool(self.cookies and os.path.exists(self.cookies))
-        clients = ['android_vr', 'mweb']
         opts = {
             'outtmpl': template,
             'ffmpeg_location': self._ffmpeg_dir(),
@@ -233,10 +192,8 @@ class Downloader:
             'noplaylist': True,
             'progress_hooks': [self._hook],
             'postprocessor_hooks': [self._pp_hook],
-            'extractor_args': {'youtube': {'player_client': clients}},
         }
         self._apply_cookies_file_only(opts)
-        print(f"[Y2obi] download cookies={self.cookies} exists={has_cookies}", flush=True)
         return opts
 
     def _resolve_path(self, info, ydl, template):
@@ -263,65 +220,61 @@ class Downloader:
             pass
         return None
 
+    def _run_download(self, url, template, fmt_opts, what="download"):
+        """Download `url` into `template`, walking PLAYER_CLIENTS on failure.
+
+        Every format goes through here: the four callers only differ in the
+        format selector and the postprocessors they add.
+        """
+        self._cancel = False
+        last_err = None
+        for clients in PLAYER_CLIENTS:
+            opts = self._base_opts(template)
+            opts.update(fmt_opts)
+            opts['extractor_args'] = {'youtube': {'player_client': list(clients)}}
+            ydl = yt_dlp.YoutubeDL(opts)
+            try:
+                info = ydl.extract_info(url, download=True)
+            except yt_dlp.utils.DownloadError as e:
+                if "Cancelled" in str(e):
+                    raise
+                last_err = e
+                continue
+            except Exception as e:
+                raise DownloadError(f"Unexpected error: {e}\n\n{traceback.format_exc()}") from e
+            finally:
+                ydl.close()
+
+            path = self._resolve_path(info, ydl, template)
+            if path and os.path.exists(path):
+                return path
+            # Extraction worked, so another client will not help.
+            raise DownloadError(f"No file — {what} did not produce output")
+
+        raise DownloadError(f"YouTube download error: {last_err}") from last_err
+
     def download_mp4(self, url, output_dir, quality="Best"):
         qlabel = f" [{quality}]" if quality != "Best" else ""
         template = os.path.join(output_dir, f"%(title)s{qlabel}.%(ext)s")
         max_h, _ = QUALITY_MAP.get(quality, (None, None))
-        opts = self._base_opts(template)
         fmt_sort = [f"height:{max_h}", "ext", "vcodec", "acodec"] if max_h else ["res", "ext", "vcodec", "acodec"]
-        opts.update({
+        return self._run_download(url, template, {
             'format': f"bestvideo[height<={max_h}]+bestaudio/best[height<={max_h}]" if max_h else "bestvideo+bestaudio/best",
             'format_sort': fmt_sort,
             'merge_output_format': 'mp4',
         })
-        self._cancel = False
-        ydl = yt_dlp.YoutubeDL(opts)
-        try:
-            info = ydl.extract_info(url, download=True)
-        except yt_dlp.utils.DownloadError as e:
-            if "Cancelled" in str(e):
-                raise
-            raise DownloadError(f"YouTube download error: {e}") from e
-        except Exception as e:
-            raise DownloadError(f"Unexpected error: {e}\n\n{traceback.format_exc()}") from e
-        finally:
-            ydl.close()
-
-        path = self._resolve_path(info, ydl, template)
-        if path and os.path.exists(path):
-            return path
-        raise DownloadError("No file — download did not produce output")
 
     def download_webm(self, url, output_dir, quality="Best"):
         qlabel = f" [{quality}]" if quality != "Best" else ""
         template = os.path.join(output_dir, f"%(title)s{qlabel}.%(ext)s")
-        fmt = QUALITY_MAP_WEBM.get(quality, QUALITY_MAP_WEBM["Best"])
-        opts = self._base_opts(template)
-        opts.update({
-            'format': fmt,
+        return self._run_download(url, template, {
+            'format': QUALITY_MAP_WEBM.get(quality, QUALITY_MAP_WEBM["Best"]),
             'merge_output_format': 'webm',
         })
-        self._cancel = False
-        ydl = yt_dlp.YoutubeDL(opts)
-        try:
-            info = ydl.extract_info(url, download=True)
-        except yt_dlp.utils.DownloadError as e:
-            if "Cancelled" in str(e):
-                raise
-            raise DownloadError(f"YouTube download error: {e}") from e
-        except Exception as e:
-            raise DownloadError(f"Unexpected error: {e}\n\n{traceback.format_exc()}") from e
-        finally:
-            ydl.close()
-        path = self._resolve_path(info, ydl, template)
-        if path and os.path.exists(path):
-            return path
-        raise DownloadError("No file — download did not produce output")
 
     def download_mp3(self, url, output_dir):
         template = os.path.join(output_dir, "%(title)s.%(ext)s")
-        opts = self._base_opts(template)
-        opts.update({
+        return self._run_download(url, template, {
             'format': AUDIO_FORMAT,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
@@ -329,23 +282,17 @@ class Downloader:
                 'preferredquality': '320',
             }],
         })
-        self._cancel = False
-        ydl = yt_dlp.YoutubeDL(opts)
-        try:
-            info = ydl.extract_info(url, download=True)
-        except yt_dlp.utils.DownloadError as e:
-            if "Cancelled" in str(e):
-                raise
-            raise DownloadError(f"YouTube download error: {e}") from e
-        except Exception as e:
-            raise DownloadError(f"Unexpected error: {e}\n\n{traceback.format_exc()}") from e
-        finally:
-            ydl.close()
 
-        path = self._resolve_path(info, ydl, template)
-        if path and os.path.exists(path):
-            return path
-        raise DownloadError("No file — download did not produce output")
+    def download_audio_raw(self, url, output_dir):
+        """bestaudio with no re-encode — input for transcription.
+
+        Deliberately not download_mp3(): transcription decodes to 16 kHz mono
+        WAV anyway, so encoding to 320 kbps mp3 in between is minutes of
+        wasted ffmpeg time on a long video and loses quality twice.
+        """
+        template = os.path.join(output_dir, "%(title)s.%(ext)s")
+        return self._run_download(url, template, {'format': AUDIO_FORMAT},
+                                  what="audio download")
 
     def _hook(self, d):
         if self._cancel:
@@ -366,6 +313,12 @@ class Downloader:
                 self._status_cb("Processing...")
 
     def _pp_hook(self, d):
+        # Postprocessing fires no download hooks, so without this a Cancel
+        # pressed during "Converting..." was ignored and the file completed
+        # anyway. yt-dlp emits 'started' before each postprocessor runs, so this
+        # stops the next one — an ffmpeg run already in flight still finishes.
+        if self._cancel:
+            raise yt_dlp.utils.DownloadError("Cancelled")
         if d['status'] == 'started':
             if self._status_cb:
                 self._status_cb(f"Converting...")

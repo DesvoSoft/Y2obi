@@ -1,0 +1,42 @@
+{
+  "note": "The Vulkan backend comes from llama.cpp and the rest from whisper.cpp, because whisper.cpp publishes no Vulkan build for Windows. They share ggml and this exact combination was verified with tools/verify_whisper.py. build.spec refuses to build if any hash here stops matching, so the pair can never drift silently.",
+  "verified": "2026-08-17",
+  "verified_with": "tools/verify_whisper.py",
+  "files": {
+    "whisper-cli.exe": {
+      "sha256": "95e3c0b0e778ad9499eb0125f97c1dcf437dd9eb4ea77050b043574f93c2631d",
+      "size": 479232,
+      "source": "whisper.cpp v1.9.2 (whisper-bin-x64.zip)"
+    },
+    "whisper.dll": {
+      "sha256": "792fc523c7ad16e6b9c348e30ad5e5f591165cbcf6a80ca8d0db02a38ce3eea2",
+      "size": 1368064,
+      "source": "whisper.cpp v1.9.2 (whisper-bin-x64.zip)"
+    },
+    "ggml.dll": {
+      "sha256": "894c6237ee7849843213906a2b6a0b371aaa6234048d465f206d910ae846fafb",
+      "size": 67584,
+      "source": "whisper.cpp v1.9.2 (whisper-bin-x64.zip)"
+    },
+    "ggml-base.dll": {
+      "sha256": "1482359d921b4c1b183d49db1d770f9b5e90d86a618b8b648d4845c2471ad6b0",
+      "size": 666624,
+      "source": "whisper.cpp v1.9.2 (whisper-bin-x64.zip)"
+    },
+    "ggml-cpu-haswell.dll": {
+      "sha256": "f8cf2f35a06498d783d77fde42004dd54d2f8236b0d42ac323b94bba65a603c4",
+      "size": 811008,
+      "source": "whisper.cpp v1.9.2 (whisper-bin-x64.zip)"
+    },
+    "ggml-cpu-x64.dll": {
+      "sha256": "af0f1c2f28ff9e3f472481dd969907bda85fa39d4fde17617d4bb0b389301b60",
+      "size": 794112,
+      "source": "whisper.cpp v1.9.2 (whisper-bin-x64.zip)"
+    },
+    "ggml-vulkan.dll": {
+      "sha256": "45f583b580bed97b05a9d2232598bfeb27b7a296277aa28f4c21db6d8a66d666",
+      "size": 54313472,
+      "source": "llama.cpp b10472 (llama-b10472-bin-win-vulkan-x64.zip)"
+    }
+  }
+}

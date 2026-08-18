@@ -3,20 +3,83 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- The session token rides in the page URL, so no request may carry a
+     Referer — thumbnails are fetched straight from Google's CDN. -->
+<meta name="referrer" content="no-referrer">
 <title>Y2obi</title>
 <link rel="icon" type="image/svg+xml" href="/static/icon.svg">
 <link rel="stylesheet" href="/static/vitra/vitra.min.css">
 <style>
-  *, *::before, *::after { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; overflow: hidden; }
-  body {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-    background: #0a0a12;
+  /* ---------------------------------------------------------------------
+     Theme bridge.
+
+     Vitra ships light themes (light, pastel) and dark ones (dark, neon,
+     ocean, emerald) behind the same variable names, so anything hardcoded
+     here breaks half of them — the page used to paint a near-black panel
+     under Vitra's dark pastel text, which came out at ~1.3:1.
+
+     Rules that keep every theme readable:
+       - surfaces derive from --vitra-color-bg / --vitra-color-text-primary,
+         never from a literal colour;
+       - text on an accent fill uses --on-accent, not #fff;
+       - --vitra-color-text-tertiary is never used for text that carries
+         meaning (it is 60% alpha in pastel, ~2.4:1) — use --faint instead.
+     --------------------------------------------------------------------- */
+  :root {
+    --panel-bg:  color-mix(in srgb, var(--vitra-color-bg) 62%, transparent);
+    --panel-bd:  color-mix(in srgb, var(--vitra-color-text-primary) 14%, transparent);
+    --panel-sh:  0 20px 60px rgba(0,0,0,.55);
+    --card-bg:   color-mix(in srgb, var(--vitra-color-text-primary) 6%, transparent);
+    --card-bd:   color-mix(in srgb, var(--vitra-color-text-primary) 12%, transparent);
+    --field-bg:  color-mix(in srgb, var(--vitra-color-bg) 55%, transparent);
+    --faint:     color-mix(in srgb, var(--vitra-color-text-primary) 62%, transparent);
+    --on-accent: var(--vitra-color-text-inverse);
+    --ok-fg:  #2ced8c; --ok-bg:  rgba(16,183,99,.16);  --ok-bd:  rgba(16,183,99,.35);
+    --bad-fg: #f37272; --bad-bg: rgba(239,67,67,.14);  --bad-bd: rgba(239,67,67,.32);
+    --fx-op: .55;
   }
-  .vitra-gradient-bg { position: fixed; inset: 0; z-index: 0; opacity: .5; }
+  /* Light themes: white-on-accent drops to ~3:1, so accent fills take dark
+     ink, and the status colours need real contrast against a white sheet. */
+  [data-theme="pastel"], [data-theme="light"] {
+    --panel-sh:  0 20px 50px rgba(60,30,60,.16);
+    --on-accent: hsl(var(--vitra-color-accent-h) 85% 10%);
+    --ok-fg:  #0a7040; --ok-bg:  rgba(16,183,99,.14); --ok-bd:  rgba(16,183,99,.4);
+    --bad-fg: #b02020; --bad-bg: rgba(239,67,67,.1);  --bad-bd: rgba(239,67,67,.3);
+    --fx-op: .3;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+
+  /* --- focus -------------------------------------------------------------
+     Every control has to be reachable and *visibly* reachable by keyboard.
+     :focus-visible rather than :focus so a mouse click does not leave a ring
+     behind. The chips draw the ring as a box-shadow because they are already
+     using their border to signal selection. */
+  :focus-visible { outline: 2px solid var(--vitra-color-accent); outline-offset: 2px; }
+  .q-chip:focus-visible, .fmt-chip:focus-visible, .src-tab:focus-visible,
+  .mini-btn:focus-visible, .res-btn:focus-visible, .btn-go:focus-visible,
+  .analyze-btn:focus-visible, .btn-cancel:focus-visible,
+  .cookie-badge:focus-visible, .footer-link:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--vitra-color-accent) 45%, transparent);
+    border-color: var(--vitra-color-accent);
+  }
+  /* The theme dots are solid colour swatches, so an accent ring can vanish
+     against the swatch itself — use the text colour, which always contrasts. */
+  .theme-chip:focus-visible {
+    outline: 2px solid var(--vitra-color-text-primary); outline-offset: 3px;
+  }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    padding: 22px; overflow: auto;
+    background: var(--vitra-color-bg);
+    color: var(--vitra-color-text-primary);
+  }
+
+  /* Decoration layer — behind the panel, so particles stop landing on text. */
+  #fxLayer { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+  .vitra-gradient-bg { position: fixed; inset: 0; z-index: -1; opacity: var(--fx-op); }
   .vitra-glow-orb { z-index: 0; }
 
   @keyframes particle-drift {
@@ -26,202 +89,434 @@
     75%  { transform: translate(-40px,-30px) scale(1.1); opacity: .85; }
     100% { transform: translate(0,0) scale(1); opacity: .5; }
   }
-  .app-wrap .vitra-particle {
+  #fxLayer .vitra-particle {
     animation: particle-drift var(--vitra-particle-speed) ease-in-out infinite;
     animation-delay: calc(var(--i, 0) * -0.3s);
   }
 
   .app-wrap {
-    position: relative; z-index: 1; width: 680px; max-width: 96vw;
-    overflow: hidden;
-    background: rgba(10,10,18,.35); border-radius: 20px;
-    padding: 20px 22px 14px;
-    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
-    box-shadow: 0 8px 40px rgba(0,0,0,.5);
+    position: relative; z-index: 1; margin: auto;
+    width: 860px; max-width: 100%;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-bd);
+    border-radius: 22px; padding: 22px 26px 18px;
+    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+    box-shadow: var(--panel-sh);
   }
 
-  .app-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-  .logo-group { display: flex; align-items: center; gap: 10px; }
+  /* --- header ---------------------------------------------------------- */
+  .app-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+  .logo-group { display: flex; align-items: center; gap: 12px; }
   .logo-icon {
-    width: 36px; height: 36px; border-radius: 10px;
+    width: 42px; height: 42px; border-radius: 12px;
     background: linear-gradient(135deg, var(--vitra-color-accent), #7c4dff);
     display: flex; align-items: center; justify-content: center;
-    font-size: 18px; color: #fff; flex-shrink: 0;
+    color: var(--on-accent); flex-shrink: 0;
   }
-  .logo-text { font-size: 20px; font-weight: 800; margin: 0; line-height: 1.1; }
-  .logo-sub { font-size: 10px; color: var(--vitra-color-text-tertiary); margin: 0; }
+  .logo-text { font-size: 23px; font-weight: 800; margin: 0; line-height: 1.15; }
+  .logo-sub  { font-size: 12px; color: var(--faint); margin: 0; }
 
-  .theme-picker { display: flex; gap: 6px; }
+  .header-right { display: flex; align-items: center; gap: 14px; }
+  .theme-picker { display: flex; gap: 7px; }
   .theme-chip {
-    width: 24px; height: 24px; border-radius: 50%;
+    width: 22px; height: 22px; border-radius: 50%; padding: 0;
     border: 2px solid transparent; cursor: pointer;
-    transition: all .25s ease; position: relative;
+    transition: transform .2s ease, border-color .2s ease;
+    box-shadow: 0 0 0 1px var(--card-bd);
   }
-  .theme-chip:hover { transform: scale(1.15); }
-  .theme-chip.active { border-color: var(--vitra-color-text-primary); box-shadow: 0 0 10px rgba(255,255,255,.15); }
+  .theme-chip:hover { transform: scale(1.18); }
+  .theme-chip.active { border-color: var(--vitra-color-text-primary); }
   .theme-chip[data-theme="dark"]    { background: #1a1a2e; }
   .theme-chip[data-theme="neon"]    { background: #00ffff; }
   .theme-chip[data-theme="ocean"]   { background: #0088ff; }
   .theme-chip[data-theme="emerald"] { background: #00cc88; }
   .theme-chip[data-theme="pastel"]  { background: #ffb6c1; }
+  .theme-chip[data-theme="light"]   { background: #f2f5f6; }
 
-  .url-row {
-    display: grid; grid-template-columns: 1fr auto; gap: 8px;
-    margin-bottom: 14px;
+  .icon-btn {
+    width: 34px; height: 34px; border-radius: 10px; padding: 0; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--field-bg); color: var(--vitra-color-text-secondary);
+    border: 1px solid var(--card-bd); transition: color .2s, border-color .2s;
   }
+  .icon-btn:hover { border-color: var(--vitra-color-accent); color: var(--vitra-color-accent); }
+
+  .set-section { margin-bottom: 20px; }
+  .set-section h4 {
+    margin: 0 0 9px; font-size: 11px; font-weight: 700; letter-spacing: .7px;
+    text-transform: uppercase; color: var(--vitra-color-text-secondary);
+  }
+  .set-section .models-sub { margin-bottom: 10px; }
+  .set-section .theme-picker { gap: 9px; }
+  .set-section .theme-chip { width: 26px; height: 26px; }
+
+  .cookie-badge {
+    font-size: 11px; font-weight: 600; padding: 5px 11px; border-radius: 8px;
+    cursor: pointer; white-space: nowrap;
+    background: var(--bad-bg); color: var(--bad-fg); border: 1px solid var(--bad-bd);
+    transition: filter .2s;
+  }
+  .cookie-badge.loaded { background: var(--ok-bg); color: var(--ok-fg); border-color: var(--ok-bd); }
+  .cookie-badge:hover { filter: brightness(1.15); }
+
+  /* --- source switch ----------------------------------------------------- */
+  .source-tabs { display: flex; gap: 7px; margin-bottom: 12px; }
+  .src-tab {
+    padding: 8px 18px; border-radius: 10px; font-size: 12.5px; font-weight: 700;
+    cursor: pointer; background: var(--field-bg);
+    color: var(--vitra-color-text-secondary); border: 1px solid var(--card-bd);
+    transition: background .2s, color .2s, border-color .2s;
+  }
+  .src-tab:hover { border-color: var(--vitra-color-accent); color: var(--vitra-color-accent); }
+  .src-tab.active {
+    background: color-mix(in srgb, var(--vitra-color-accent) 18%, transparent);
+    border-color: var(--vitra-color-accent); color: var(--vitra-color-accent);
+  }
+
+  .file-row { display: none; grid-template-columns: 1fr auto; gap: 10px; margin-bottom: 14px; }
+  .file-row.visible { display: grid; }
+  .file-name {
+    height: 48px; display: flex; align-items: center; gap: 10px; padding: 0 16px;
+    border: 1px solid var(--card-bd); border-radius: 12px; background: var(--field-bg);
+    font-size: 14px; color: var(--vitra-color-text-primary);
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .file-name.empty { color: var(--faint); }
+
+  /* --- url row ---------------------------------------------------------- */
+  .url-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-bottom: 14px; }
+  .url-row.hidden { display: none; }
   .url-row input {
-    width: 100%; min-width: 0; height: 42px; padding: 0 14px;
-    border: 1px solid var(--vitra-color-border);
-    border-radius: 10px; background: var(--vitra-color-surface);
-    color: var(--vitra-color-text-primary); font-size: 14px; outline: none;
-    transition: border-color .25s ease, box-shadow .25s ease;
+    width: 100%; min-width: 0; height: 48px; padding: 0 16px;
+    border: 1px solid var(--card-bd); border-radius: 12px;
+    background: var(--field-bg); color: var(--vitra-color-text-primary);
+    font-size: 15px; outline: none;
+    transition: border-color .2s ease, box-shadow .2s ease;
   }
   .url-row input:focus {
     border-color: var(--vitra-color-accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--vitra-color-accent) 20%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--vitra-color-accent) 24%, transparent);
   }
-  .url-row input::placeholder { color: var(--vitra-color-text-tertiary); }
-  .url-row .analyze-btn { height: 42px; min-width: 110px; border-radius: 10px; }
+  .url-row input::placeholder { color: var(--faint); }
+  .url-row .analyze-btn {
+    height: 48px; min-width: 128px; border-radius: 12px; font-size: 14px; font-weight: 600;
+    background: var(--card-bg); color: var(--vitra-color-text-primary);
+    border: 1px solid var(--card-bd);
+  }
+  .url-row .analyze-btn:hover:not(:disabled) { border-color: var(--vitra-color-accent); color: var(--vitra-color-accent); }
+  .url-row .analyze-btn:disabled { opacity: .55; }
 
-  .info-card { padding: 0; overflow: hidden; display: none; margin-bottom: 14px; }
+  /* --- surfaces --------------------------------------------------------- */
+  .panel {
+    background: var(--card-bg); border: 1px solid var(--card-bd);
+    border-radius: 14px; margin-bottom: 12px;
+  }
+
+  .info-card { display: none; overflow: hidden; }
   .info-card.visible { display: block; }
-  .info-inner { display: flex; gap: 14px; padding: 14px; }
+  .info-inner { display: flex; gap: 16px; padding: 14px; }
   .thumb-wrap {
-    width: 160px; height: 90px; border-radius: 8px; overflow: hidden;
-    background: var(--vitra-color-surface); flex-shrink: 0;
+    width: 176px; height: 99px; border-radius: 10px; overflow: hidden;
+    background: var(--field-bg); flex-shrink: 0;
   }
   .thumb-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .thumb-placeholder {
     width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
-    font-size: 11px; color: var(--vitra-color-text-tertiary);
+    flex-direction: column; gap: 6px; font-size: 12px; color: var(--faint);
   }
-  .info-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-  .info-body .title { font-size: 14px; font-weight: 700; line-height: 1.3; color: var(--vitra-color-text-primary); }
-  .info-body .channel { font-size: 12px; color: var(--vitra-color-text-secondary); }
-  .info-body .meta { font-size: 12px; color: var(--vitra-color-text-tertiary); }
+  .thumb-ext { font-size: 11px; font-weight: 700; letter-spacing: 1px; }
+  .info-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 5px; }
+  .info-body .title {
+    font-size: 16px; font-weight: 700; line-height: 1.35; color: var(--vitra-color-text-primary);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .info-body .channel { font-size: 13px; color: var(--vitra-color-text-secondary); font-weight: 600; }
+  .info-body .meta    { font-size: 12.5px; color: var(--faint); }
 
-  .quality-bar { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; }
-  .quality-bar-label { font-size: 10px; color: var(--vitra-color-text-tertiary); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
-  .quality-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  /* --- options ---------------------------------------------------------- */
+  .options { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .opt-row { display: grid; grid-template-columns: 84px 1fr; gap: 14px; align-items: center; }
+  .opt-row.hidden { display: none; }
+  .opt-label {
+    font-size: 11px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase;
+    color: var(--vitra-color-text-secondary); text-align: right; line-height: 1.3;
+  }
+  .opt-note { grid-column: 2; font-size: 11.5px; color: var(--faint); line-height: 1.45; margin-top: -4px; }
+
+  .chip-set { display: flex; flex-wrap: wrap; gap: 6px; }
   .q-chip {
-    padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
-    border: 1px solid var(--vitra-color-border); background: var(--vitra-color-surface);
-    color: var(--vitra-color-text-secondary); cursor: pointer; transition: all .2s; user-select: none;
+    padding: 5px 13px; border-radius: 20px; font-size: 12px; font-weight: 600;
+    border: 1px solid var(--card-bd); background: var(--field-bg);
+    color: var(--vitra-color-text-secondary); cursor: pointer;
+    transition: background .2s, color .2s, border-color .2s; user-select: none;
   }
   .q-chip:hover { border-color: var(--vitra-color-accent); color: var(--vitra-color-accent); }
-  .q-chip.active { background: var(--vitra-color-accent); border-color: var(--vitra-color-accent); color: #fff; }
-
-  .format-row { display: flex; gap: 7px; margin-bottom: 10px; }
-  .fmt-chip {
-    flex: 1; height: 40px; border-radius: 10px; font-size: 12px; font-weight: 700;
-    border: 1.5px solid var(--vitra-color-border); background: var(--vitra-color-surface);
-    color: var(--vitra-color-text-secondary); cursor: pointer; transition: all .2s;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 1px; letter-spacing: .5px; user-select: none;
+  .q-chip.active {
+    background: var(--vitra-color-accent); border-color: var(--vitra-color-accent);
+    color: var(--on-accent);
   }
-  .fmt-chip:hover { border-color: var(--vitra-color-accent); color: var(--vitra-color-accent); }
+  .q-chip .chip-note { opacity: .8; font-weight: 500; }
+  .chip-set.locked .q-chip { pointer-events: none; opacity: .5; }
+
+  .format-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .fmt-chip {
+    height: 54px; border-radius: 12px;
+    border: 1.5px solid var(--card-bd); background: var(--field-bg);
+    color: var(--vitra-color-text-secondary); cursor: pointer;
+    transition: background .2s, color .2s, border-color .2s;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 2px; user-select: none; padding: 0;
+  }
+  .fmt-chip:hover:not(:disabled) { border-color: var(--vitra-color-accent); color: var(--vitra-color-accent); }
   .fmt-chip.active {
-    background: color-mix(in srgb, var(--vitra-color-accent) 15%, transparent);
+    background: color-mix(in srgb, var(--vitra-color-accent) 18%, transparent);
     border-color: var(--vitra-color-accent); color: var(--vitra-color-accent);
   }
-  .fmt-chip .fmt-ext { font-size: 14px; font-weight: 800; }
-  .fmt-chip .fmt-desc { font-size: 9px; opacity: .7; text-transform: uppercase; letter-spacing: .5px; }
+  .fmt-chip .fmt-ext  { font-size: 15px; font-weight: 800; letter-spacing: .5px; }
+  .fmt-chip .fmt-desc { font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; opacity: .85; }
+  .fmt-chip:disabled  { opacity: .4; cursor: default; }
 
-  .actions-row { display: flex; gap: 8px; margin-bottom: 12px; }
-  .actions-row button { flex: 1; height: 42px; border-radius: 10px; font-weight: 600; }
-  .actions-row .btn-cancel { flex: 0 0 100px; }
+  /* --- actions ---------------------------------------------------------- */
+  .actions-row { display: flex; gap: 10px; margin-bottom: 12px; }
+  .actions-row .btn-go {
+    flex: 1; height: 50px; border-radius: 12px; font-size: 15px; font-weight: 700;
+    background: var(--vitra-color-accent); color: var(--on-accent); border: none;
+  }
+  /* Disabled must not just be a faded accent fill — at 45% on a dark sheet it
+     still reads as a live button. */
+  .actions-row .btn-go:disabled {
+    background: var(--field-bg); color: var(--faint);
+    border: 1px solid var(--card-bd); cursor: default;
+  }
+  /* Cancel only exists while something is running — a permanently greyed-out
+     button next to Download reads as broken. */
+  .actions-row .btn-cancel { display: none; flex: 0 0 120px; height: 50px; border-radius: 12px; font-weight: 600;
+    background: var(--bad-bg); color: var(--bad-fg); border: 1px solid var(--bad-bd); }
+  .actions-row.busy .btn-cancel { display: block; }
 
-  .progress-card { display: none; margin-bottom: 10px; }
+  /* --- progress --------------------------------------------------------- */
+  .progress-card { display: none; padding: 12px 16px 14px; }
   .progress-card.visible { display: block; }
-  .progress-stats { display: flex; margin-top: 4px; font-size: 12px; align-items: center; }
+  .progress-card .vitra-progress-value { color: var(--vitra-color-text-primary); font-weight: 700; }
+  .progress-stats { display: flex; margin-top: 6px; font-size: 12.5px; align-items: center; gap: 10px; }
   .progress-stats .status { flex: 1; color: var(--vitra-color-text-secondary); }
-  .progress-stats .speed-eta { color: var(--vitra-color-text-tertiary); font-size: 11px; }
+  .progress-stats .speed-eta { color: var(--faint); font-size: 12px; white-space: nowrap; }
+  .result-row { display: none; gap: 8px; margin-top: 12px; }
+  .result-row.visible { display: flex; }
+  .res-btn {
+    height: 36px; padding: 0 16px; border-radius: 10px;
+    font-size: 12.5px; font-weight: 600; cursor: pointer;
+    background: var(--field-bg); color: var(--vitra-color-text-primary);
+    border: 1px solid var(--card-bd);
+  }
+  .res-btn:hover { border-color: var(--vitra-color-accent); color: var(--vitra-color-accent); }
 
+  /* --- footer ----------------------------------------------------------- */
   .footer {
-    display: flex; justify-content: space-between; align-items: center;
-    font-size: 11px; color: var(--vitra-color-text-tertiary);
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    font-size: 12px; color: var(--faint); padding-top: 4px;
   }
-  .footer-left { display: flex; align-items: center; gap: 7px; }
-  .footer-link { color: var(--vitra-color-text-tertiary); text-decoration: none; transition: color .2s; cursor: pointer; }
+  .footer-left { display: flex; align-items: center; gap: 9px; }
+  .footer-link {
+    color: var(--faint); text-decoration: none; transition: color .2s; cursor: pointer;
+    background: none; border: none; padding: 0; font: inherit;
+  }
   .footer-link:hover { color: var(--vitra-color-accent); }
-  .footer-sep { opacity: .3; }
+  .footer-sep { opacity: .35; }
+  .footer-link.ok { color: var(--ok-fg); }
   .btn-details {
-    background: var(--vitra-color-surface); color: var(--vitra-color-text-secondary);
-    border: 1px solid var(--vitra-color-border); border-radius: 6px;
-    padding: 3px 10px; cursor: pointer; font-size: 10px; display: none;
+    background: var(--field-bg); color: var(--vitra-color-text-secondary);
+    border: 1px solid var(--card-bd); border-radius: 7px;
+    padding: 3px 10px; cursor: pointer; font-size: 11px;
   }
-  .btn-details:hover { background: var(--vitra-color-surface-hover); }
-  .cookie-badge {
-    font-size: 10px; padding: 2px 7px; border-radius: 5px; cursor: pointer;
-    background: rgba(200,50,50,.2); color: #f0a0a0; border: 1px solid rgba(200,50,50,.25);
-    transition: all .2s;
-  }
-  .cookie-badge.loaded {
-    background: rgba(50,200,100,.15); color: #a0f0b0; border-color: rgba(50,200,100,.25);
-  }
-  .cookie-badge:hover { filter: brightness(1.3); }
-  .kbd-hint { font-size: 10px; opacity: .5; display: flex; align-items: center; gap: 6px; }
+  .details-group { display: flex; align-items: center; gap: 9px; }
+  .kbd-hint { display: flex; align-items: center; gap: 6px; }
   .kbd-hint kbd {
-    padding: 1px 5px; border-radius: 4px;
-    background: var(--vitra-color-surface); border: 1px solid var(--vitra-color-border);
-    font-size: 9px; font-family: inherit;
+    padding: 2px 6px; border-radius: 5px;
+    background: var(--field-bg); border: 1px solid var(--card-bd);
+    color: var(--vitra-color-text-secondary); font-size: 10.5px; font-family: inherit;
   }
+
   .error-msg {
-    background: rgba(200,50,50,.12); border: 1px solid rgba(200,50,50,.25);
-    border-radius: 8px; padding: 10px 14px; margin-bottom: 12px;
-    font-size: 12px; color: #f0a0a0; display: none; word-break: break-word;
+    background: var(--bad-bg); border: 1px solid var(--bad-bd);
+    border-radius: 12px; padding: 11px 15px; margin-bottom: 12px;
+    font-size: 13px; color: var(--bad-fg); display: none; word-break: break-word;
   }
   .error-msg.visible { display: block; }
+
   .toast {
-    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-    background: var(--vitra-color-surface); color: var(--vitra-color-text-primary);
-    padding: 10px 20px; border-radius: 10px; font-size: 12px;
+    position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
+    background: var(--vitra-color-bg); color: var(--vitra-color-text-primary);
+    padding: 11px 22px; border-radius: 12px; font-size: 13px;
     opacity: 0; transition: opacity .35s ease; pointer-events: none;
-    border: 1px solid var(--vitra-color-border); z-index: 100;
+    border: 1px solid var(--card-bd); box-shadow: var(--panel-sh); z-index: 100;
   }
   .toast.show { opacity: 1; }
+
+  .cookie-menu {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    background: var(--vitra-color-bg); border: 1px solid var(--card-bd);
+    border-radius: 14px; padding: 18px; z-index: 9999; min-width: 280px;
+    box-shadow: var(--panel-sh);
+  }
+  .cookie-menu h3 {
+    margin: 0 0 12px; font-size: 11px; letter-spacing: .7px; text-transform: uppercase;
+    color: var(--vitra-color-text-secondary); text-align: center; font-weight: 700;
+  }
+  .cookie-menu .menu-list { display: flex; flex-direction: column; gap: 8px; }
+  .cookie-menu button {
+    height: 38px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer;
+    background: var(--field-bg); color: var(--vitra-color-text-primary);
+    border: 1px solid var(--card-bd);
+  }
+  .cookie-menu button:hover { border-color: var(--vitra-color-accent); color: var(--vitra-color-accent); }
+  .cookie-menu button.primary { background: var(--vitra-color-accent); color: var(--on-accent); border-color: transparent; }
+  .cookie-menu .menu-note { font-size: 11px; color: var(--faint); margin-top: 12px; text-align: center; line-height: 1.45; }
+
+  /* --- first-run onboarding --------------------------------------------- */
+  .ob-lead { font-size: 13px; color: var(--vitra-color-text-secondary); line-height: 1.55; margin-bottom: 16px; }
+  .ob-step { margin-bottom: 16px; }
+  .ob-step h4 {
+    margin: 0 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .7px;
+    text-transform: uppercase; color: var(--vitra-color-text-secondary);
+  }
+  .ob-note { font-size: 11.5px; color: var(--faint); line-height: 1.5; margin-top: 8px; }
+  .ob-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+  .ob-actions .mini-btn { height: 36px; padding: 0 18px; font-size: 13px; }
+  .opt-card {
+    display: flex; align-items: center; gap: 10px; padding: 11px 13px;
+    border: 1px solid var(--card-bd); border-radius: 11px; background: var(--field-bg);
+    cursor: pointer; margin-bottom: 7px; text-align: left; width: 100%;
+    color: var(--vitra-color-text-primary); font: inherit;
+  }
+  .opt-card:hover:not(:disabled) { border-color: var(--vitra-color-accent); }
+  .opt-card.sel { border-color: var(--vitra-color-accent); background: color-mix(in srgb, var(--vitra-color-accent) 12%, transparent); }
+  .opt-card:disabled { opacity: .55; cursor: default; }
+  /* Both are spans so the whole card can stay a <button>; without display:block
+     the title and the description run together on one line. */
+  .opt-card .oc-main { flex: 1; min-width: 0; }
+  .opt-card .oc-title { display: block; font-size: 13.5px; font-weight: 700; }
+  .opt-card .oc-sub { display: block; font-size: 11.5px; color: var(--faint); margin-top: 3px; line-height: 1.45; }
+  .opt-card .oc-mark {
+    width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0;
+    border: 2px solid var(--card-bd);
+  }
+  .opt-card.sel .oc-mark { border-color: var(--vitra-color-accent); background: var(--vitra-color-accent); }
+
+  /* --- models panel ------------------------------------------------------ */
+  .modal-backdrop {
+    position: fixed; inset: 0; z-index: 9998;
+    background: color-mix(in srgb, var(--vitra-color-bg) 70%, transparent);
+    -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  }
+  .models-panel {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    z-index: 9999; width: 560px; max-width: 92vw; max-height: 86vh; overflow: auto;
+    background: var(--vitra-color-bg); border: 1px solid var(--card-bd);
+    border-radius: 16px; padding: 20px; box-shadow: var(--panel-sh);
+  }
+  .models-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+  .models-head h3 { margin: 0; font-size: 15px; font-weight: 800; }
+  .models-sub { font-size: 11.5px; color: var(--faint); line-height: 1.5; margin-bottom: 14px; }
+  .models-sub code { color: var(--vitra-color-text-secondary); font-size: 11px; word-break: break-all; }
+  .model-item {
+    display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center;
+    padding: 11px 13px; border: 1px solid var(--card-bd); border-radius: 11px;
+    background: var(--field-bg); margin-bottom: 8px;
+  }
+  .model-item.is-default { border-color: var(--vitra-color-accent); }
+  .model-title { font-size: 13.5px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .model-meta { font-size: 11.5px; color: var(--faint); margin-top: 3px; }
+  .model-actions { display: flex; gap: 6px; align-items: center; }
+  .mini-btn {
+    height: 30px; padding: 0 12px; border-radius: 8px; font-size: 11.5px; font-weight: 600;
+    cursor: pointer; background: var(--card-bg); color: var(--vitra-color-text-primary);
+    border: 1px solid var(--card-bd); white-space: nowrap;
+  }
+  .mini-btn:hover:not(:disabled) { border-color: var(--vitra-color-accent); color: var(--vitra-color-accent); }
+  .mini-btn:disabled { opacity: .5; cursor: default; }
+  .mini-btn.danger { color: var(--bad-fg); border-color: var(--bad-bd); }
+  .mini-btn.primary { background: var(--vitra-color-accent); color: var(--on-accent); border-color: transparent; }
+  .tag {
+    font-size: 9.5px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 20px;
+    background: var(--ok-bg); color: var(--ok-fg); border: 1px solid var(--ok-bd);
+  }
+  .model-pct { font-size: 12px; font-weight: 700; color: var(--vitra-color-accent); min-width: 38px; text-align: right; }
+  .tag.muted { background: var(--card-bg); color: var(--faint); border-color: var(--card-bd); }
+  .model-bar { grid-column: 1 / -1; height: 5px; border-radius: 3px; background: var(--card-bg); overflow: hidden; }
+  .model-bar > div { height: 100%; width: 0; background: var(--vitra-color-accent); transition: width .3s; }
+
+  /* Vitra's glass card is a fixed white wash — invisible on light themes. */
+  .vitra-card-glass { background: var(--card-bg); border-color: var(--card-bd); }
+
+  @media (max-width: 720px) {
+    .app-wrap { padding: 18px 16px 14px; }
+    .opt-row { grid-template-columns: 1fr; gap: 6px; }
+    .opt-label { text-align: left; }
+    .opt-note { grid-column: 1; }
+    /* Shrink the thumbnail rather than stacking it — a full-width thumb costs
+       more vertical room than the whole options panel at the minimum size. */
+    .thumb-wrap { width: 128px; height: 72px; }
+    .info-body .title { font-size: 15px; }
+  }
 </style>
 </head>
 <body>
 
 <div class="vitra-gradient-bg"></div>
-<div class="vitra-glow-orb vitra-glow-orb-1" style="top:-10%;left:-5%"></div>
-<div class="vitra-glow-orb vitra-glow-orb-2" style="bottom:-15%;right:-5%"></div>
-<div class="vitra-glow-orb vitra-glow-orb-3" style="top:40%;left:60%"></div>
+<div id="fxLayer">
+  <div class="vitra-glow-orb vitra-glow-orb-1" style="top:-10%;left:-5%"></div>
+  <div class="vitra-glow-orb vitra-glow-orb-2" style="bottom:-15%;right:-5%"></div>
+  <div class="vitra-glow-orb vitra-glow-orb-3" style="top:40%;left:60%"></div>
+</div>
 
 <div class="app-wrap">
 
   <div class="app-header">
     <div class="logo-group">
       <div class="logo-icon">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
           <path d="M10 9l5 3-5 3V9z"/><rect x="3" y="5" width="18" height="14" rx="4"/>
         </svg>
       </div>
       <div>
         <h1 class="logo-text vitra-gradient-text">Y2obi</h1>
-        <p class="logo-sub">YouTube downloader</p>
+        <p class="logo-sub">YouTube downloader &amp; transcriber</p>
       </div>
     </div>
-    <div class="theme-picker" id="themePicker">
-      <div class="theme-chip active" data-theme="dark"    title="Dark"></div>
-      <div class="theme-chip"        data-theme="neon"    title="Neon"></div>
-      <div class="theme-chip"        data-theme="ocean"   title="Ocean"></div>
-      <div class="theme-chip"        data-theme="emerald" title="Emerald"></div>
-      <div class="theme-chip"        data-theme="pastel"  title="Pastel"></div>
+    <div class="header-right">
+      <button type="button" id="settingsBtn" class="icon-btn" title="Settings" aria-label="Settings">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H2a2 2 0 110-4h.09A1.65 1.65 0 004.6 8a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V2a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H22a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+        </svg>
+      </button>
+      <input type="file" id="cookieInput" accept=".txt" style="display:none">
     </div>
   </div>
 
-  <div class="url-row">
+  <div class="source-tabs" id="sourceTabs" role="tablist" aria-label="Source">
+    <button class="src-tab active" data-src="url">YouTube</button>
+    <button class="src-tab" data-src="file" id="srcFileTab">Local file</button>
+  </div>
+
+  <div class="url-row" id="urlRow">
     <input id="urlInput" type="text" placeholder="Paste a YouTube URL..." autofocus>
-    <button class="vitra-btn vitra-btn-glass analyze-btn" id="analyzeBtn">Analyze</button>
+    <button class="analyze-btn" id="analyzeBtn">Analyze</button>
+  </div>
+
+  <div class="file-row" id="fileRow">
+    <div class="file-name empty" id="fileName">No file chosen</div>
+    <button class="analyze-btn" id="pickFileBtn">Choose file...</button>
   </div>
 
   <div id="errorMsg" class="error-msg">
     <span id="errorText"></span>
   </div>
 
-  <div id="infoCard" class="vitra-card vitra-card-glass info-card vitra-spotlight">
+  <div id="infoCard" class="panel info-card">
     <div class="info-inner">
       <div class="thumb-wrap">
         <div class="thumb-placeholder" id="thumbPlaceholder">No thumbnail</div>
@@ -231,32 +526,52 @@
         <div class="title"   id="titleText">No video analyzed</div>
         <div class="channel" id="channelText"></div>
         <div class="meta"    id="metaText"></div>
-        <div class="quality-bar" id="qualityBar" style="display:none">
-          <div class="quality-bar-label">Quality</div>
-          <div class="quality-chips" id="qualityChips"></div>
-        </div>
       </div>
     </div>
   </div>
 
-  <div class="format-row" id="formatRow">
-    <button class="fmt-chip active" id="fmtMp4" disabled>
-      <span class="fmt-ext">MP4</span><span class="fmt-desc">Video</span>
-    </button>
-    <button class="fmt-chip" id="fmtWebm" disabled>
-      <span class="fmt-ext">WEBM</span><span class="fmt-desc">Smaller</span>
-    </button>
-    <button class="fmt-chip" id="fmtMp3" disabled>
-      <span class="fmt-ext">MP3</span><span class="fmt-desc">Audio</span>
-    </button>
+  <div class="panel options">
+    <div class="opt-row">
+      <span class="opt-label">Format</span>
+      <div class="format-row" role="radiogroup" aria-label="Format">
+        <button class="fmt-chip active" id="fmtMp4" disabled>
+          <span class="fmt-ext">MP4</span><span class="fmt-desc">Video</span>
+        </button>
+        <button class="fmt-chip" id="fmtWebm" disabled>
+          <span class="fmt-ext">WEBM</span><span class="fmt-desc">Smaller</span>
+        </button>
+        <button class="fmt-chip" id="fmtMp3" disabled>
+          <span class="fmt-ext">MP3</span><span class="fmt-desc">Audio</span>
+        </button>
+        <button class="fmt-chip" id="fmtTxt" disabled>
+          <span class="fmt-ext">TXT</span><span class="fmt-desc">Transcript</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="opt-row" id="qualityRow">
+      <span class="opt-label">Quality</span>
+      <div class="chip-set" id="qualityChips" role="radiogroup" aria-label="Quality"></div>
+    </div>
+
+    <div class="opt-row hidden" id="modelRow">
+      <span class="opt-label">Accuracy</span>
+      <div class="chip-set" id="modelChips" role="radiogroup" aria-label="Accuracy"></div>
+    </div>
+
+    <div class="opt-row hidden" id="langRow">
+      <span class="opt-label">Language</span>
+      <div class="chip-set" id="langChips" role="radiogroup" aria-label="Language"></div>
+      <div class="opt-note" id="transcriptHint"></div>
+    </div>
   </div>
 
-  <div class="actions-row">
-    <button class="vitra-btn vitra-btn-primary" id="downloadBtn" disabled>Download</button>
-    <button class="vitra-btn btn-cancel" id="cancelBtn" disabled>Cancel</button>
+  <div class="actions-row" id="actionsRow">
+    <button class="btn-go" id="downloadBtn" disabled>Download</button>
+    <button class="btn-cancel" id="cancelBtn">Cancel</button>
   </div>
 
-  <div id="progressCard" class="vitra-card vitra-card-glass progress-card">
+  <div id="progressCard" class="panel progress-card">
     <div class="vitra-progress-container">
       <div class="vitra-progress vitra-progress-lg">
         <div class="vitra-progress-bar vitra-progress-bar-striped vitra-progress-bar-animated" id="barFill" style="width:0%"></div>
@@ -267,19 +582,27 @@
       <span class="status" id="statusText">Ready</span>
       <span class="speed-eta" id="speedText"></span>
     </div>
+    <div class="result-row" id="resultRow">
+      <button class="res-btn" id="openFileBtn">Open file</button>
+      <button class="res-btn" id="revealBtn">Show in folder</button>
+    </div>
   </div>
 
   <div class="footer">
     <div class="footer-left">
-      <span id="cookieBadge" class="cookie-badge" title="No cookies loaded">bot</span>
-      <input type="file" id="cookieInput" accept=".txt" style="display:none">
+      <button type="button" class="footer-link" id="openFolderLink" title="Open downloads folder">Open folder</button>
       <span class="footer-sep">|</span>
-      <span class="footer-link" id="openFolderLink" title="Open downloads folder">Open folder</span>
+      <button type="button" class="footer-link" id="settingsLink" title="Settings">Settings</button>
+      <span class="footer-sep">|</span>
+      <button type="button" class="footer-link" id="cookieLink" title="Cookies">Cookies: off</button>
       <span class="footer-sep">|</span>
       <a class="footer-link" href="https://github.com/DesvoSoft" target="_blank">DesvoSoft</a>
-      <span class="footer-sep">|</span>
-      <button id="detailsBtn" class="btn-details">Details</button>
+      <span class="details-group" id="detailsGroup" style="display:none">
+        <span class="footer-sep">|</span>
+        <button id="detailsBtn" class="btn-details">Details</button>
+      </span>
     </div>
+    <div class="kbd-hint" id="kbdHint"><kbd>Enter</kbd> analyze <span class="footer-sep">·</span> <kbd>Ctrl</kbd>+<kbd>V</kbd> paste</div>
   </div>
 
 </div>
@@ -290,16 +613,24 @@
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   Vitra.theme.init({ defaultTheme: 'dark', persist: true });
-  const _pc = { container: '.app-wrap' };
-  Vitra.particles.spawn(40, { ..._pc, color: 'var(--vitra-color-accent)', size: 5 });
-  Vitra.particles.spawn(30, { ..._pc, color: '#7c4dff', size: 4 });
-  Vitra.particles.spawn(20, { ..._pc, color: '#ff6b9d', size: 3 });
-  Vitra.particles.spawn(15, { ..._pc, color: '#ffffff', size: 2 });
-  // randomize duration and delay per particle for organic feel
-  document.querySelectorAll('.app-wrap .vitra-particle').forEach((p, i) => {
+  // Particles live behind the panel: spawning them inside .app-wrap put drifting
+  // dots on top of the title and progress text.
+  const _pc = { container: '#fxLayer' };
+  Vitra.particles.spawn(34, { ..._pc, color: 'var(--vitra-color-accent)', size: 5 });
+  Vitra.particles.spawn(26, { ..._pc, color: '#7c4dff', size: 4 });
+  Vitra.particles.spawn(18, { ..._pc, color: '#ff6b9d', size: 3 });
+  document.querySelectorAll('#fxLayer .vitra-particle').forEach(p => {
     p.style.animationDuration = (5 + Math.random() * 8) + 's';
     p.style.animationDelay   = -(Math.random() * 10) + 's';
   });
+
+  // Per-session token, handed over in the page URL by main.py. Every /api/ call
+  // must carry it; without it the server answers 403.
+  const TOKEN = new URLSearchParams(location.search).get('t') || '';
+  function api(path, opts = {}) {
+    const headers = Object.assign({}, opts.headers, { 'X-Y2obi-Token': TOKEN });
+    return fetch(path, Object.assign({}, opts, { headers }));
+  }
 
   const $ = id => document.getElementById(id);
   const URL_INPUT    = $('urlInput');
@@ -312,11 +643,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const TITLE_TEXT   = $('titleText');
   const CHANNEL_TEXT = $('channelText');
   const META_TEXT    = $('metaText');
-  const QUALITY_BAR  = $('qualityBar');
+  const QUALITY_ROW  = $('qualityRow');
   const QUALITY_CHIPS= $('qualityChips');
   const FMT_MP4      = $('fmtMp4');
   const FMT_WEBM     = $('fmtWebm');
   const FMT_MP3      = $('fmtMp3');
+  const FMT_TXT      = $('fmtTxt');
+  const MODEL_ROW    = $('modelRow');
+  const LANG_ROW     = $('langRow');
+  const MODEL_CHIPS  = $('modelChips');
+  const LANG_CHIPS   = $('langChips');
+  const TRANSCRIPT_HINT = $('transcriptHint');
+  const ACTIONS_ROW  = $('actionsRow');
   const DOWNLOAD_BTN = $('downloadBtn');
   const CANCEL_BTN   = $('cancelBtn');
   const PROGRESS_CARD= $('progressCard');
@@ -324,83 +662,802 @@ document.addEventListener('DOMContentLoaded', () => {
   const PCT_TEXT     = $('pctText');
   const STATUS_TEXT  = $('statusText');
   const SPEED_TEXT   = $('speedText');
+  const RESULT_ROW   = $('resultRow');
+  const OPEN_FILE_BTN= $('openFileBtn');
+  const REVEAL_BTN   = $('revealBtn');
   const DETAILS_BTN  = $('detailsBtn');
+  const DETAILS_GROUP= $('detailsGroup');
   const TOAST        = $('toast');
-  const COOKIE_BADGE = $('cookieBadge');
+  const COOKIE_LINK  = $('cookieLink');
   const COOKIE_INPUT = $('cookieInput');
 
+  const SOURCE_TABS  = $('sourceTabs');
+  const SRC_FILE_TAB = $('srcFileTab');
+  const URL_ROW      = $('urlRow');
+  const FILE_ROW     = $('fileRow');
+  const FILE_NAME    = $('fileName');
+  const PICK_FILE_BTN= $('pickFileBtn');
+  const KBD_HINT     = $('kbdHint');
+
+  let sourceMode = 'url';       // 'url' | 'file'
+  let localFile = null;         // probe result from /api/analyze_file
+  let selectedHeight = null;    // null = keep the source resolution
   let videoInfo = null, currentUrl = null, downloading = false;
   let taskId = null, pollTimer = null, lastError = null, selectedQuality = 'Best';
   let selectedFormat = 'mp4';
-  const fmtChips = [FMT_MP4, FMT_WEBM, FMT_MP3];
-  const fmtMap = { fmtMp4: 'mp4', fmtWebm: 'webm', fmtMp3: 'mp3' };
+  let selectedModel = null, selectedLang = 'auto', transcribeAvailable = false;
+  let modelInfo = {}, allModels = [], modelsDir = '';
+  let modelTasks = {};          // model name -> in-flight download task id
+  let cookiesLoaded = false, cookieMethod = null;
+  let selectedDevice = 'cpu', gpuBackend = null;
+  const fmtChips = [FMT_MP4, FMT_WEBM, FMT_MP3, FMT_TXT];
+  const fmtMap = { fmtMp4: 'mp4', fmtWebm: 'webm', fmtMp3: 'mp3', fmtTxt: 'txt' };
 
-  // Theme switcher
-  document.querySelectorAll('.theme-chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      document.querySelector('.theme-chip.active')?.classList.remove('active');
-      chip.classList.add('active');
-      Vitra.theme.set(chip.dataset.theme);
+  // Theme switcher. The active dot is resolved from the persisted theme, not
+  // assumed to be the one marked active in the markup.
+  // --- source switch -----------------------------------------------------
+  // The native file dialog is the only way to learn a real path, so the tab is
+  // meaningless when the page is opened outside the desktop shell.
+  //
+  // pywebview injects window.pywebview on NavigationCompleted — that is *after*
+  // DOMContentLoaded — and only then fires pywebviewready. Deciding here and
+  // never revisiting would hide the tab forever in the actual app.
+  let hasNative = false;
+  function syncNativeTab() {
+    hasNative = !!(window.pywebview && window.pywebview.api
+                   && window.pywebview.api.pick_file);
+    SRC_FILE_TAB.style.display = hasNative ? '' : 'none';
+  }
+  window.addEventListener('pywebviewready', syncNativeTab);
+  syncNativeTab();
+
+  SOURCE_TABS.querySelectorAll('.src-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      if (downloading || tab.classList.contains('active')) return;
+      SOURCE_TABS.querySelector('.src-tab.active').classList.remove('active');
+      tab.classList.add('active');
+      sourceMode = tab.dataset.src;
+      URL_ROW.classList.toggle('hidden', sourceMode !== 'url');
+      FILE_ROW.classList.toggle('visible', sourceMode === 'file');
+      resetSelection();
     });
   });
 
-  // Format chips
+  function resetSelection() {
+    videoInfo = null; currentUrl = null; localFile = null;
+    INFO_CARD.classList.remove('visible');
+    PROGRESS_CARD.classList.remove('visible');
+    hideError();
+    // WEBM means nothing for a local file. Carrying the selection over would
+    // leave the chip looking selected while disabled, and Convert would post a
+    // format the server rejects.
+    if (sourceMode === 'file' && selectedFormat === 'webm') selectFormat('mp4');
+    setFmtEnabled(false);
+    DOWNLOAD_BTN.disabled = true;
+    FILE_NAME.textContent = 'No file chosen';
+    FILE_NAME.classList.add('empty');
+    if (sourceMode === 'url') buildQualityChips([]);
+    KBD_HINT.style.display = sourceMode === 'url' ? '' : 'none';
+    syncOptionRows();
+  }
+
+  PICK_FILE_BTN.addEventListener('click', onPickFile);
+
+  function onPickFile() {
+    if (!hasNative) return;
+    PICK_FILE_BTN.disabled = true;
+    window.pywebview.api.pick_file()
+      .then(path => (path ? analyzeFile(path) : null))
+      .catch(() => toast('Could not open the file dialog'))
+      .finally(() => { PICK_FILE_BTN.disabled = false; });
+  }
+
+  function analyzeFile(path) {
+    hideError();
+    return api('/api/analyze_file', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path}),
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) { showError(d.error); return; }
+      localFile = d;
+      FILE_NAME.textContent = d.name;
+      FILE_NAME.classList.remove('empty');
+      TITLE_TEXT.textContent = d.name;
+      CHANNEL_TEXT.textContent = 'Local file';
+      const bits = [];
+      if (d.duration_str) bits.push(d.duration_str);
+      if (d.has_video && d.height) bits.push(d.width + 'x' + d.height);
+      bits.push(fmtSize(d.size));
+      if (d.has_video && d.vcodec) bits.push(d.vcodec);
+      else if (d.acodec) bits.push(d.acodec);
+      META_TEXT.textContent = bits.join('  ·  ');
+      THUMB_IMG.style.display = 'none';
+      THUMB_PH.style.display = 'flex';
+      // A 176x99 box reading "Video file" is a lot of dead space; an icon plus
+      // the actual extension says more in less.
+      const ext = (d.name.split('.').pop() || '').toUpperCase().slice(0, 5);
+      const icon = d.has_video
+        ? '<path d="M15 10l4.5-2.6v9.2L15 14M4 6h11v12H4z"/>'
+        : '<path d="M9 18V6l10-2v12M9 18a3 3 0 11-3-3 3 3 0 013 3zm10-2a3 3 0 11-3-3 3 3 0 013 3z"/>';
+      THUMB_PH.innerHTML =
+        '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        + 'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' + icon + '</svg>'
+        + '<span class="thumb-ext">' + escHtml(ext) + '</span>';
+      INFO_CARD.classList.add('visible');
+      // An audio-only file has nothing to put in an mp4.
+      if (!d.has_video && selectedFormat === 'mp4') selectFormat('mp3');
+      setFmtEnabled(true);
+      DOWNLOAD_BTN.disabled = false;
+      STATUS_TEXT.textContent = 'Ready';
+      buildHeightChips(d);
+      syncOptionRows();
+    })
+    .catch(err => showError('Could not read that file: ' + err.message));
+  }
+
+  // Only offer downscales — upscaling a local video is never what someone wants.
+  function buildHeightChips(info) {
+    QUALITY_CHIPS.innerHTML = '';
+    selectedHeight = null;
+    if (!info.has_video) return;
+    const opts = [['Original', null]];
+    [1080, 720, 480, 360].forEach(h => { if (info.height > h) opts.push([h + 'p', h]); });
+    opts.forEach(([label, h], i) => {
+      const c = makeChip('', i === 0, () => { selectedHeight = h; });
+      c.textContent = label;
+      QUALITY_CHIPS.appendChild(c);
+    });
+  }
+
+  function selectFormat(fmt) {
+    const chip = fmtChips.find(c => fmtMap[c.id] === fmt);
+    if (!chip) return;
+    fmtChips.forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    selectedFormat = fmt;
+  }
+
+  // Format chips decide which option rows are relevant.
+  function syncOptionRows() {
+    const isTxt = selectedFormat === 'txt';
+    const isAudio = selectedFormat === 'mp3';
+    const isFile = sourceMode === 'file';
+    // For a local file the quality row picks a downscale, and only for mp4.
+    const showQuality = isFile
+      ? (selectedFormat === 'mp4' && !!(localFile && localFile.has_video))
+      : !(isTxt || isAudio);
+    QUALITY_ROW.classList.toggle('hidden', !showQuality);
+    QUALITY_ROW.querySelector('.opt-label').textContent = isFile ? 'Resolution' : 'Quality';
+    MODEL_ROW.classList.toggle('hidden', !isTxt);
+    LANG_ROW.classList.toggle('hidden', !isTxt);
+    DOWNLOAD_BTN.textContent = isTxt ? 'Transcribe' : (isFile ? 'Convert' : 'Download');
+    if (isTxt) updateTranscriptHint();
+  }
+
   fmtChips.forEach(chip => {
     chip.addEventListener('click', () => {
       if (chip.disabled) return;
       fmtChips.forEach(c => c.classList.remove('active'));
       chip.classList.add('active');
       selectedFormat = fmtMap[chip.id];
-      QUALITY_BAR.style.display = selectedFormat === 'mp3' ? 'none' : 'flex';
+      syncOptionRows();
     });
   });
 
+  // --- Transcription options -------------------------------------------
+  // Every option chip goes through here. They used to be plain <span>s, which
+  // meant Tab could not reach the quality, model or language pickers at all.
+  function makeChip(html, active, onSelect) {
+    const el = document.createElement('span');
+    el.className = 'q-chip' + (active ? ' active' : '');
+    el.innerHTML = html;
+    el.setAttribute('role', 'radio');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-checked', active ? 'true' : 'false');
+    const pick = () => {
+      // .locked only kills pointer events; without this a focused chip could
+      // still be changed with Enter while a job is running.
+      if (el.parentNode.classList.contains('locked')) return;
+      el.parentNode.querySelectorAll('.q-chip').forEach(c => {
+        c.classList.remove('active');
+        c.setAttribute('aria-checked', 'false');
+      });
+      el.classList.add('active');
+      el.setAttribute('aria-checked', 'true');
+      onSelect();
+    };
+    el.addEventListener('click', pick);
+    el.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); }
+    });
+    return el;
+  }
+
+  function chip(text, active, onClick) {
+    return makeChip(text, active, () => { onClick(); updateTranscriptHint(); });
+  }
+
+  function updateTranscriptHint() {
+    const m = modelInfo[selectedModel];
+    if (!m) { TRANSCRIPT_HINT.textContent = ''; return; }
+    TRANSCRIPT_HINT.textContent = m.installed
+      ? 'Runs offline on your CPU. Long videos take a while — roughly a quarter of the video length. Saves .txt and .srt.'
+      : `First run downloads the ${m.label.toLowerCase()} model (~${m.size_mb} MB), once. After that it works offline.`;
+  }
+
+  // whisper takes any ISO code straight through, so offering more here costs
+  // nothing on the backend.
+  const LANGS = [['auto','Auto'], ['en','English'], ['es','Espanol'], ['pt','Portugues'],
+                 ['fr','Francais'], ['de','Deutsch'], ['it','Italiano'], ['ja','Japanese']];
+
+  function saveConfig(patch) {
+    api('/api/config', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(patch),
+    }).catch(() => {});
+  }
+
+  function loadTranscribeModels() {
+    return api('/api/transcribe/models')
+      .then(r => r.json())
+      .then(d => {
+        transcribeAvailable = !!d.available;
+        if (!transcribeAvailable) {
+          FMT_TXT.title = 'Transcription engine not included in this build';
+          return;
+        }
+        allModels = d.models;
+        modelsDir = d.dir || '';
+        modelTasks = Object.assign({}, d.downloading || {});
+        gpuBackend = d.gpu || null;
+        selectedDevice = d.device || 'cpu';
+        selectedModel = d.default;
+        selectedLang = d.lang || 'auto';
+        d.models.forEach(m => { modelInfo[m.name] = m; });
+        buildModelChips();
+        LANG_CHIPS.innerHTML = '';
+        LANGS.forEach(([code, name]) => {
+          LANG_CHIPS.appendChild(chip(name, code === selectedLang, () => {
+            selectedLang = code; saveConfig({lang: code});
+          }));
+        });
+        updateTranscriptHint();
+        maybeOnboard(d);
+      })
+      .catch(() => {});
+  }
+
+  // Chips are the two recommended models plus anything the user actually
+  // downloaded — downloading a model from the panel would be pointless if it
+  // never showed up here.
+  function buildModelChips() {
+    MODEL_CHIPS.innerHTML = '';
+    const shown = allModels.filter(m => m.offered || m.installed);
+    if (!shown.some(m => m.name === selectedModel) && shown.length) {
+      selectedModel = shown[0].name;
+    }
+    shown.forEach(m => {
+      const note = m.installed ? m.note : m.size_mb + ' MB';
+      MODEL_CHIPS.appendChild(chip(
+        `${m.label} <span class="chip-note">${note}</span>`,
+        m.name === selectedModel,
+        () => { selectedModel = m.name; saveConfig({model: m.name}); }));
+    });
+  }
+  loadTranscribeModels();
+
+
+  // --- first run ---------------------------------------------------------
+  // Transcription needs a 0.5-1.6 GB model. Springing that download on someone
+  // mid-task is the worst moment to tell them, so the choice is made up front,
+  // once, and remembered in config.json.
+  function maybeOnboard(d) {
+    if (!d || d.onboarded || !d.available) return;
+    const gpu = d.gpu;
+    let chosenModel = d.default;
+    let chosenDevice = gpu ? (d.device || 'gpu') : 'cpu';
+
+    const back = document.createElement('div');
+    back.className = 'modal-backdrop';
+    const panel = document.createElement('div');
+    panel.className = 'models-panel';
+    panel.id = 'onboardPanel';
+    document.body.appendChild(back);
+    document.body.appendChild(panel);
+
+    const finish = (startDownload) => {
+      saveConfig({onboarded: true, model: chosenModel, device: chosenDevice});
+      selectedModel = chosenModel;
+      panel.remove(); back.remove();
+      document.removeEventListener('keydown', onKey);
+      loadTranscribeModels().then(() => {
+        if (startDownload) { openSettings(); downloadFromPanel(chosenModel); }
+      });
+    };
+    const onKey = e => { if (e.key === 'Escape') finish(false); };
+    document.addEventListener('keydown', onKey);
+
+    const modelCards = d.models.filter(m => m.offered || m.installed).map(m => `
+      <button type="button" class="opt-card${m.name === chosenModel ? ' sel' : ''}" data-model="${m.name}">
+        <span class="oc-main">
+          <span class="oc-title">${escHtml(m.label)}${m.installed ? ' <span class="tag muted">Downloaded</span>' : ''}</span>
+          <span class="oc-sub">${escHtml(m.note)} · ${m.installed ? m.disk_mb + ' MB on disk' : '~' + m.size_mb + ' MB download'}</span>
+        </span>
+        <span class="oc-mark"></span>
+      </button>`).join('');
+
+    panel.innerHTML = `
+      <div class="models-head"><h3>Welcome to Y2obi</h3></div>
+      <div class="ob-lead">
+        Downloading videos and audio works right away — nothing to set up.
+        Transcribing to text needs a speech model, which is downloaded once and
+        then runs entirely offline on your machine.
+      </div>
+      <div class="ob-step">
+        <h4>Accuracy</h4>
+        ${modelCards}
+        <div class="ob-note">You can change this later, and download the other sizes, under <b>Models</b> in the footer.</div>
+      </div>
+      <div class="ob-step">
+        <h4>Processing</h4>
+        <button type="button" class="opt-card${chosenDevice === 'cpu' ? ' sel' : ''}" data-device="cpu">
+          <span class="oc-main">
+            <span class="oc-title">CPU</span>
+            <span class="oc-sub">Works everywhere. Roughly a quarter of the video's length to transcribe.</span>
+          </span>
+          <span class="oc-mark"></span>
+        </button>
+        <button type="button" class="opt-card${chosenDevice === 'gpu' ? ' sel' : ''}" data-device="gpu" ${gpu ? '' : 'disabled'}>
+          <span class="oc-main">
+            <span class="oc-title">GPU${gpu ? '' : ' — not available in this build'}</span>
+            <span class="oc-sub">${gpu
+              ? 'Much faster. Detected: ' + escHtml(gpu.device || gpu.name)
+              : 'This build ships a CPU-only engine. Nothing is wrong with your machine.'}</span>
+          </span>
+          <span class="oc-mark"></span>
+        </button>
+      </div>
+      <div class="ob-actions">
+        <button type="button" class="mini-btn" id="obLater">Not now</button>
+        <button type="button" class="mini-btn primary" id="obGet">Download model</button>
+      </div>`;
+
+    panel.querySelectorAll('[data-model]').forEach(b => b.addEventListener('click', () => {
+      panel.querySelectorAll('[data-model]').forEach(x => x.classList.remove('sel'));
+      b.classList.add('sel');
+      chosenModel = b.dataset.model;
+      syncGet();
+    }));
+    panel.querySelectorAll('[data-device]').forEach(b => b.addEventListener('click', () => {
+      if (b.disabled) return;
+      panel.querySelectorAll('[data-device]').forEach(x => x.classList.remove('sel'));
+      b.classList.add('sel');
+      chosenDevice = b.dataset.device;
+    }));
+
+    const getBtn = panel.querySelector('#obGet');
+    function syncGet() {
+      const m = d.models.find(x => x.name === chosenModel);
+      getBtn.textContent = m && m.installed ? 'Done' : 'Download model';
+    }
+    syncGet();
+    getBtn.addEventListener('click', () => {
+      const m = d.models.find(x => x.name === chosenModel);
+      finish(!(m && m.installed));
+    });
+    panel.querySelector('#obLater').addEventListener('click', () => finish(false));
+  }
+
+  // --- models panel ------------------------------------------------------
+  $('settingsLink').addEventListener('click', openSettings);
+  $('settingsBtn').addEventListener('click', openSettings);
+
+  // Onboarding opens the panel and starts the chosen download, so the progress
+  // bar the user then watches is the same one the panel owns.
+  function downloadFromPanel(name) {
+    const panel = document.getElementById('settingsPanel');
+    if (!panel) return;
+    const row = panel.querySelector(`.model-item[data-model="${name}"]`);
+    const btn = row && row.querySelector('.mini-btn.primary');
+    if (btn) btn.click();
+  }
+
+  function openSettings() {
+    if (document.getElementById('settingsPanel')) return;
+    const back = document.createElement('div');
+    back.className = 'modal-backdrop';
+    back.id = 'modelsBackdrop';
+    const panel = document.createElement('div');
+    panel.className = 'models-panel';
+    panel.id = 'settingsPanel';
+    document.body.appendChild(back);
+    document.body.appendChild(panel);
+    const close = () => {
+      panel.remove(); back.remove();
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    back.addEventListener('click', close);
+
+    function render() {
+      panel.innerHTML = `
+        <div class="models-head">
+          <h3>Settings</h3>
+          <button class="mini-btn" id="settingsClose">Close</button>
+        </div>
+
+        <div class="set-section">
+          <h4>Appearance</h4>
+          <div class="theme-picker" id="setThemes"></div>
+        </div>
+
+        <div class="set-section">
+          <h4>Processing</h4>
+          <div id="deviceRow"></div>
+        </div>
+
+        <div class="set-section">
+          <h4>Cookies</h4>
+          <div class="models-sub">Only needed for age-restricted or private videos.</div>
+          <div class="model-item">
+            <div>
+              <div class="model-title" id="setCookieState"></div>
+              <div class="model-meta">Stored in <code>%APPDATA%\\Y2obi\\cookies.txt</code></div>
+            </div>
+            <div class="model-actions">
+              <button class="mini-btn" id="setCookieLoad">Load...</button>
+              <button class="mini-btn danger" id="setCookieClear">Clear</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="set-section">
+          <h4>Storage</h4>
+          <div class="model-item">
+            <div>
+              <div class="model-title">Downloads and transcripts</div>
+              <div class="model-meta"><code>%USERPROFILE%\\Downloads\\Y2obi</code></div>
+            </div>
+            <div class="model-actions">
+              <button class="mini-btn" id="setOpenFolder">Open</button>
+            </div>
+          </div>
+          <div class="model-item">
+            <div>
+              <div class="model-title">Speech models</div>
+              <div class="model-meta" id="setStorageMeta"></div>
+            </div>
+          </div>
+          <div class="ob-note">
+            Everything else the app writes is temporary and swept on the next launch.
+          </div>
+        </div>
+
+        <div class="set-section">
+          <h4>Speech models</h4>
+          <div class="models-sub" id="setTransSub"></div>
+          <div id="modelList"></div>
+        </div>`;
+
+      panel.querySelector('#settingsClose').addEventListener('click', close);
+
+      // Appearance — the same dots that used to crowd the header.
+      const themes = [['dark','Dark'],['neon','Neon'],['ocean','Ocean'],
+                      ['emerald','Emerald'],['pastel','Pastel'],['light','Light']];
+      const applied = document.documentElement.getAttribute('data-theme');
+      const themeHost = panel.querySelector('#setThemes');
+      themes.forEach(([id, label]) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'theme-chip' + (id === applied ? ' active' : '');
+        b.dataset.theme = id;
+        b.title = label;
+        b.setAttribute('aria-label', label + ' theme');
+        b.onclick = () => {
+          themeHost.querySelectorAll('.theme-chip').forEach(x => x.classList.remove('active'));
+          b.classList.add('active');
+          Vitra.theme.set(id);
+        };
+        themeHost.appendChild(b);
+      });
+
+      // Transcription
+      if (!transcribeAvailable) {
+        panel.querySelector('#setTransSub').textContent =
+          'This build ships without the speech engine, so there is nothing to configure.';
+      } else {
+        const installed = allModels.filter(m => m.installed);
+        const used = installed.reduce((a, m) => a + m.disk_mb, 0);
+        const partial = allModels.reduce((a, m) => a + (m.partial_mb || 0), 0);
+        panel.querySelector('#setTransSub').innerHTML =
+          `Models are downloaded once and kept in <code>${escHtml(modelsDir)}</code>. `
+          + `${installed.length} of ${allModels.length} downloaded`
+          + (used ? ' · ' + used + ' MB on disk' : '')
+          + (partial ? ' · ' + partial + ' MB unfinished' : '') + '.';
+        renderDevice(panel.querySelector('#deviceRow'));
+        const list = panel.querySelector('#modelList');
+        allModels.forEach(m => list.appendChild(modelRow(m)));
+      }
+
+      // Cookies
+      const cookieState = panel.querySelector('#setCookieState');
+      cookieState.innerHTML = cookiesLoaded
+        ? `Loaded <span class="tag">${escHtml(cookieMethod || 'on')}</span>`
+        : 'Not loaded <span class="tag muted">optional</span>';
+      panel.querySelector('#setCookieLoad').onclick = () => { close(); showCookieMenu(); };
+      const clearBtn = panel.querySelector('#setCookieClear');
+      clearBtn.disabled = !cookiesLoaded;
+      clearBtn.onclick = () => {
+        clearBtn.disabled = true;
+        api('/api/cookies', {method: 'DELETE'})
+          .then(() => { cookiesLoaded = false; cookieMethod = null; syncCookieBadge(); toast('Cookies cleared'); render(); })
+          .catch(() => { toast('Could not clear cookies'); clearBtn.disabled = false; });
+      };
+
+      // Storage
+      panel.querySelector('#setOpenFolder').onclick = () => api('/api/open_folder', {method: 'POST'});
+      const partialTotal = allModels.reduce((a, m) => a + (m.partial_mb || 0), 0);
+      const usedTotal = allModels.reduce((a, m) => a + (m.installed ? m.disk_mb : 0), 0);
+      panel.querySelector('#setStorageMeta').innerHTML =
+        `<code>${escHtml(modelsDir || '%APPDATA%\\\\Y2obi\\\\models')}</code> · `
+        + `${usedTotal} MB` + (partialTotal ? ` · ${partialTotal} MB unfinished` : '');
+    }
+
+    function modelRow(m) {
+      const row = document.createElement('div');
+      row.className = 'model-item' + (m.name === selectedModel ? ' is-default' : '');
+      row.dataset.model = m.name;
+      const isDefault = m.name === selectedModel;
+      row.innerHTML = `
+        <div>
+          <div class="model-title">${escHtml(m.label)}
+            ${isDefault ? '<span class="tag">Default</span>'
+                        : (m.installed ? '<span class="tag muted">Downloaded</span>' : '')}
+          </div>
+          <div class="model-meta">${escHtml(m.note)} · ${m.installed
+              ? m.disk_mb + ' MB on disk'
+              : m.size_mb + ' MB download' + (m.partial_mb ? ' · ' + m.partial_mb + ' MB already fetched' : '')}</div>
+        </div>
+        <div class="model-actions"></div>`;
+      const actions = row.querySelector('.model-actions');
+
+      if (m.installed && !isDefault) {
+        const def = document.createElement('button');
+        def.className = 'mini-btn';
+        def.textContent = 'Use by default';
+        def.onclick = () => {
+          selectedModel = m.name;
+          saveConfig({model: m.name});
+          buildModelChips(); updateTranscriptHint(); render();
+        };
+        actions.appendChild(def);
+      }
+      // A download that is still running when the panel is reopened must show
+      // as running — otherwise the Download button invites a second one.
+      if (!m.installed && modelTasks[m.name]) {
+        attachModelDownload(m, row, modelTasks[m.name]);
+        return row;
+      }
+      if (m.installed) {
+        const del = document.createElement('button');
+        del.className = 'mini-btn danger';
+        del.textContent = 'Delete';
+        del.onclick = () => {
+          del.disabled = true;
+          api('/api/models/' + m.name, {method: 'DELETE'})
+            .then(r => r.json())
+            .then(d => {
+              if (!d.ok) { toast(d.reason || 'Could not delete'); del.disabled = false; return; }
+              Object.assign(m, d.model); modelInfo[m.name] = m;
+              toast(m.label + ' deleted');
+              buildModelChips(); updateTranscriptHint(); render();
+            })
+            .catch(() => { toast('Could not delete'); del.disabled = false; });
+        };
+        actions.appendChild(del);
+      } else {
+        if (m.partial_mb) {
+          const drop = document.createElement('button');
+          drop.className = 'mini-btn danger';
+          drop.textContent = 'Discard ' + m.partial_mb + ' MB';
+          drop.title = 'Delete the half-finished download';
+          drop.onclick = () => {
+            drop.disabled = true;
+            api('/api/models/' + m.name, {method: 'DELETE'})
+              .then(r => r.json())
+              .then(() => loadTranscribeModels().then(render))
+              .catch(() => { toast('Could not discard'); drop.disabled = false; });
+          };
+          actions.appendChild(drop);
+        }
+        const get = document.createElement('button');
+        get.className = 'mini-btn primary';
+        get.textContent = m.partial_mb ? 'Resume' : 'Download';
+        get.onclick = () => startModelDownload(m, row, get);
+        actions.appendChild(get);
+      }
+      return row;
+    }
+
+    // GPU is offered only when whisper actually loaded a non-CPU backend, so
+    // this greys itself out on a CPU-only build without anything hardcoded.
+    function renderDevice(host) {
+      host.innerHTML = '';
+      [['cpu', 'CPU', "Works everywhere. Roughly a quarter of the video's length."],
+       ['gpu', gpuBackend ? 'GPU' : 'GPU — not available in this build',
+        gpuBackend ? 'Much faster. Detected: ' + (gpuBackend.device || gpuBackend.name)
+                   : 'This build ships a CPU-only engine.']]
+      .forEach(([id, title, sub]) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'opt-card' + (selectedDevice === id ? ' sel' : '');
+        b.disabled = id === 'gpu' && !gpuBackend;
+        b.innerHTML = `<span class="oc-main"><span class="oc-title">${escHtml(title)}</span>`
+                    + `<span class="oc-sub">${escHtml(sub)}</span></span><span class="oc-mark"></span>`;
+        b.onclick = () => {
+          if (b.disabled) return;
+          selectedDevice = id;
+          saveConfig({device: id});
+          renderDevice(host);
+        };
+        host.appendChild(b);
+      });
+    }
+
+    // Downloads use the same task machinery as everything else, so the bar and
+    // the cancel path are the ones already proven to work.
+    function startModelDownload(m, row, btn) {
+      btn.disabled = true;
+      btn.textContent = 'Starting...';
+      api('/api/models/' + m.name + '/download', {method: 'POST'})
+        .then(r => r.json())
+        .then(d => {
+          if (d.error) { toast(d.error); btn.disabled = false; btn.textContent = 'Download'; return; }
+          modelTasks[m.name] = d.task_id;
+          render();
+        })
+        .catch(() => { toast('Download failed'); btn.disabled = false; btn.textContent = 'Download'; });
+    }
+
+    // Renders a live download row and polls it. Used both for a fresh download
+    // and for one already in flight when the panel opens.
+    function attachModelDownload(m, row, taskId) {
+      const actions = row.querySelector('.model-actions');
+      actions.innerHTML = '';
+      const pct = document.createElement('span');
+      pct.className = 'model-pct';
+      pct.textContent = '...';
+      const stop = document.createElement('button');
+      stop.className = 'mini-btn danger';
+      stop.textContent = 'Cancel';
+      stop.onclick = () => {
+        stop.disabled = true;
+        api('/api/cancel/' + taskId, {method: 'POST'}).catch(() => {});
+      };
+      actions.appendChild(pct);
+      actions.appendChild(stop);
+
+      const bar = document.createElement('div');
+      bar.className = 'model-bar';
+      bar.innerHTML = '<div></div>';
+      row.appendChild(bar);
+      const fill = bar.firstElementChild;
+
+      const poll = () => {
+        // The panel may have been closed; stop polling rather than leaking a
+        // timer that writes to detached nodes forever.
+        if (!document.body.contains(panel)) return;
+        api('/api/progress/' + taskId)
+          .then(r => r.json())
+          .then(p => {
+            fill.style.width = (p.percent || 0) + '%';
+            pct.textContent = Math.round(p.percent || 0) + '%';
+            if (!p.done) { setTimeout(poll, 500); return; }
+            delete modelTasks[m.name];
+            if (p.cancelled) toast(m.label + ' download cancelled');
+            else if (p.error) toast(p.error);
+            else toast(m.label + ' ready');
+            loadTranscribeModels().then(() => {
+              if (document.body.contains(panel)) render();
+            });
+          })
+          .catch(() => setTimeout(poll, 1000));
+      };
+      poll();
+    }
+
+    render();
+  }
+
   URL_INPUT.addEventListener('keydown', e => { if (e.key === 'Enter') onAnalyze(); });
-  URL_INPUT.addEventListener('paste', () => setTimeout(onAnalyze, 50));
+  // Debounced: a paste that replaces a selection fires twice, and without this
+  // both fire an /api/analyze for the same URL.
+  let pasteTimer = null;
+  URL_INPUT.addEventListener('paste', () => {
+    if (pasteTimer) clearTimeout(pasteTimer);
+    pasteTimer = setTimeout(onAnalyze, 150);
+  });
+  // Editing the URL after analyzing must invalidate the result — otherwise
+  // Download still uses the previously analyzed currentUrl.
+  URL_INPUT.addEventListener('input', () => {
+    if (downloading || URL_INPUT.value.trim() === currentUrl) return;
+    videoInfo = null; currentUrl = null;
+    INFO_CARD.classList.remove('visible');
+    setFmtEnabled(false); DOWNLOAD_BTN.disabled = true;
+  });
   ANALYZE_BTN.addEventListener('click', onAnalyze);
   DOWNLOAD_BTN.addEventListener('click', () => startDownload(selectedFormat));
   CANCEL_BTN.addEventListener('click', onCancel);
   DETAILS_BTN.addEventListener('click', showDetails);
   const OPEN_FOLDER  = $('openFolderLink');
-  OPEN_FOLDER.addEventListener('click', () => fetch('/api/open_folder', { method: 'POST' }));
+  OPEN_FOLDER.addEventListener('click', () => api('/api/open_folder', { method: 'POST' }));
 
-  // Cookie badge click → popup menu
-  COOKIE_BADGE.addEventListener('click', showCookieMenu);
+  // The server resolves the path from the task record, so these only name a task.
+  function openResult(reveal) {
+    if (!taskId) return;
+    api('/api/open_file/' + taskId + (reveal ? '?reveal=1' : ''), { method: 'POST' })
+      .then(r => r.json())
+      .then(d => { if (!d.ok) toast(d.reason || 'Could not open the file'); })
+      .catch(() => toast('Could not open the file'));
+  }
+  OPEN_FILE_BTN.addEventListener('click', () => openResult(false));
+  REVEAL_BTN.addEventListener('click', () => openResult(true));
+
+  COOKIE_LINK.addEventListener('click', openSettings);
+
+  // The footer line is the only at-a-glance cookie state now; everything you can
+  // *do* with cookies lives in Settings.
+  function syncCookieBadge() {
+    COOKIE_LINK.textContent = 'Cookies: ' + (cookiesLoaded ? (cookieMethod || 'on') : 'off');
+    COOKIE_LINK.classList.toggle('ok', cookiesLoaded);
+  }
+  function setCookieLabel(name) {
+    cookiesLoaded = name !== 'off';
+    cookieMethod = cookiesLoaded ? name : null;
+    syncCookieBadge();
+  }
 
   function showCookieMenu() {
     const existing = document.getElementById('cookieMenu');
     if (existing) { existing.remove(); return; }
     const menu = document.createElement('div');
     menu.id = 'cookieMenu';
-    menu.style.cssText = 'position:fixed;bottom:50px;left:50%;transform:translateX(-50%);background:var(--vitra-color-surface,#1e1e2e);border:1px solid var(--vitra-color-border,#444);border-radius:12px;padding:16px;z-index:9999;min-width:260px;box-shadow:0 8px 32px rgba(0,0,0,.5)';
+    menu.className = 'cookie-menu';
     menu.innerHTML = `
-      <div style="font-size:.75rem;color:var(--vitra-color-muted,#888);margin-bottom:10px;text-align:center">LOAD YOUTUBE COOKIES</div>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        <button class="vitra-btn vitra-btn-primary"   id="exportFirefox">Firefox (recommended)</button>
-        <button class="vitra-btn vitra-btn-secondary" id="exportEdge">Edge (close first)</button>
-        <button class="vitra-btn vitra-btn-secondary" id="exportBrave">Brave (close first)</button>
-        <button class="vitra-btn vitra-btn-secondary" id="exportChrome">Chrome (close first)</button>
-        <button class="vitra-btn vitra-btn-ghost"     id="uploadCookieFile">Upload cookies.txt</button>
+      <h3>Load YouTube cookies</h3>
+      <div class="menu-list">
+        <button class="primary" id="exportFirefox">Firefox (recommended)</button>
+        <button id="exportEdge">Edge (close first)</button>
+        <button id="exportBrave">Brave (close first)</button>
+        <button id="exportChrome">Chrome (close first)</button>
+        <button id="uploadCookieFile">Upload cookies.txt</button>
       </div>
-      <div style="font-size:.7rem;color:var(--vitra-color-muted,#888);margin-top:10px;text-align:center">Chromium browsers must be fully closed before export.</div>`;
+      <div class="menu-note">Only needed for age-restricted or private videos.<br>Chromium browsers must be fully closed before export.</div>`;
     document.body.appendChild(menu);
-    document.addEventListener('click', function outside(e) {
-      if (!menu.contains(e.target) && e.target !== COOKIE_BADGE) {
-        menu.remove(); document.removeEventListener('click', outside);
-      }
-    }, true);
+    const closeMenu = () => {
+      menu.remove();
+      document.removeEventListener('click', outside, true);
+      document.removeEventListener('keydown', onMenuKey);
+    };
+    function outside(e) {
+      if (!menu.contains(e.target)) closeMenu();
+    }
+    function onMenuKey(e) { if (e.key === 'Escape') closeMenu(); }
+    document.addEventListener('click', outside, true);
+    document.addEventListener('keydown', onMenuKey);
     const doExport = (browser) => {
       menu.remove();
-      COOKIE_BADGE.textContent = '...';
-      COOKIE_BADGE.style.pointerEvents = 'none';
-      fetch('/api/cookies/export', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({browser}) })
+      COOKIE_LINK.textContent = 'Cookies: ...';
+      api('/api/cookies/export', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({browser}) })
         .then(r => r.json())
         .then(d => {
-          if (d.ok) { COOKIE_BADGE.classList.add('loaded'); COOKIE_BADGE.textContent = browser; toast('Cookies loaded from ' + browser); }
-          else { toast('Failed: ' + (d.reason || 'unknown error')); COOKIE_BADGE.textContent = 'bot'; }
+          if (d.ok) { setCookieLabel(browser); toast('Cookies loaded from ' + browser); }
+          else { toast('Failed: ' + (d.reason || 'unknown error')); setCookieLabel('off'); }
         })
-        .catch(() => { toast('Cookie export failed'); COOKIE_BADGE.textContent = 'bot'; })
-        .finally(() => { COOKIE_BADGE.style.pointerEvents = ''; });
+        .catch(() => { toast('Cookie export failed'); setCookieLabel('off'); });
     };
     document.getElementById('exportFirefox').onclick = () => doExport('firefox');
     document.getElementById('exportEdge').onclick    = () => doExport('edge');
@@ -414,22 +1471,17 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!file) return;
     const fd = new FormData();
     fd.append('file', file);
-    fetch('/api/cookies', { method: 'POST', body: fd })
+    api('/api/cookies', { method: 'POST', body: fd })
       .then(r => r.json())
-      .then(d => { if (d.ok) { COOKIE_BADGE.classList.add('loaded'); COOKIE_BADGE.textContent = 'cookies'; toast('Cookies loaded'); } })
+      .then(d => { if (d.ok) { setCookieLabel('file'); toast('Cookies loaded'); } })
       .catch(() => toast('Cookie upload failed'));
   });
 
   function checkCookies() {
-    fetch('/api/cookies/status')
+    api('/api/cookies/status')
       .then(r => r.json())
       .then(d => {
-        if (d.loaded) {
-          COOKIE_BADGE.classList.add('loaded');
-          COOKIE_BADGE.textContent = d.method || 'cookies';
-        } else {
-          COOKIE_BADGE.title = 'No cookies. Click to load. YouTube bot detection may fail.';
-        }
+        setCookieLabel(d.loaded ? (d.method || 'on') : 'off');
       }).catch(() => {});
   }
   checkCookies();
@@ -443,11 +1495,11 @@ document.addEventListener('DOMContentLoaded', () => {
     lastError = details || msg;
     ERROR_TEXT.textContent = msg;
     ERROR_MSG.classList.add('visible');
-    DETAILS_BTN.style.display = details ? 'inline' : 'none';
+    DETAILS_GROUP.style.display = details ? 'flex' : 'none';
   }
   function hideError() {
     ERROR_MSG.classList.remove('visible');
-    DETAILS_BTN.style.display = 'none';
+    DETAILS_GROUP.style.display = 'none';
     lastError = null;
   }
   function showDetails() {
@@ -464,18 +1516,12 @@ document.addEventListener('DOMContentLoaded', () => {
     selectedQuality = 'Best';
     const labels = qualities.length ? ['Best', ...qualities] : ['Best', '1080p', '720p', '480p', '360p'];
     labels.forEach((q, i) => {
-      const chip = document.createElement('span');
-      chip.className = 'q-chip' + (i === 0 ? ' active' : '');
-      chip.textContent = q;
-      chip.onclick = () => {
-        QUALITY_CHIPS.querySelectorAll('.q-chip').forEach(c => c.classList.remove('active'));
-        chip.classList.add('active');
-        selectedQuality = q;
-      };
-      QUALITY_CHIPS.appendChild(chip);
+      const c = makeChip('', i === 0, () => { selectedQuality = q; });
+      c.textContent = q;
+      QUALITY_CHIPS.appendChild(c);
     });
-    QUALITY_BAR.style.display = 'flex';
   }
+  buildQualityChips([]);
 
   function setAnalyzing(busy) {
     ANALYZE_BTN.disabled = busy;
@@ -483,25 +1529,52 @@ document.addEventListener('DOMContentLoaded', () => {
     if (busy) STATUS_TEXT.textContent = 'Fetching video info...';
   }
 
-  function setDownloading(busy) {
-    downloading = busy;
-    fmtChips.forEach(c => { c.disabled = busy || !videoInfo; });
-    DOWNLOAD_BTN.disabled = busy || !videoInfo;
-    ANALYZE_BTN.disabled = busy;
-    CANCEL_BTN.disabled = !busy;
-    QUALITY_CHIPS.querySelectorAll('.q-chip').forEach(c => c.style.pointerEvents = busy ? 'none' : '');
+  // TXT stays locked when the build ships without the whisper engine. Local
+  // files additionally rule out WEBM (VP9 would re-encode for hours) and, when
+  // there is no video track, MP4.
+  function setFmtEnabled(enabled) {
+    const isFile = sourceMode === 'file';
+    fmtChips.forEach(c => {
+      let off = !enabled || (c === FMT_TXT && !transcribeAvailable);
+      if (enabled && isFile) {
+        if (c === FMT_WEBM) off = true;
+        if (c === FMT_MP4 && localFile && !localFile.has_video) off = true;
+      }
+      c.disabled = off;
+    });
+    FMT_WEBM.title = isFile ? 'WEBM is only available for YouTube downloads' : '';
+    FMT_MP4.title = (isFile && localFile && !localFile.has_video)
+      ? 'That file has no video track' : '';
   }
 
-  function updateProgress(pct, speed, eta, status) {
+  function setDownloading(busy) {
+    downloading = busy;
+    const ready = sourceMode === 'file' ? !!localFile : !!videoInfo;
+    setFmtEnabled(!busy && ready);
+    DOWNLOAD_BTN.disabled = busy || !ready;
+    PICK_FILE_BTN.disabled = busy;
+    SOURCE_TABS.querySelectorAll('.src-tab').forEach(t => t.style.pointerEvents = busy ? 'none' : '');
+    ANALYZE_BTN.disabled = busy;
+    ACTIONS_ROW.classList.toggle('busy', busy);
+    QUALITY_CHIPS.classList.toggle('locked', busy);
+    MODEL_CHIPS.classList.toggle('locked', busy);
+    LANG_CHIPS.classList.toggle('locked', busy);
+  }
+
+  // A download reports bytes/s; a conversion reports ffmpeg's realtime factor
+  // ("12.3x"), which is the number that actually means something there.
+  function updateProgress(pct, speed, eta, status, rate) {
     BAR_FILL.style.width = pct + '%';
     PCT_TEXT.textContent = pct > 0 ? Math.round(pct) + '%' : '';
     STATUS_TEXT.textContent = status || '';
-    SPEED_TEXT.textContent = [fmtSpeed(speed), fmtEta(eta)].filter(Boolean).join('  ');
+    SPEED_TEXT.textContent = [rate || fmtSpeed(speed), fmtEta(eta)]
+      .filter(Boolean).join('  ');
   }
 
   function fmtSpeed(s) { if (!s||s<=0) return ''; if(s>1048576) return (s/1048576).toFixed(1)+' MB/s'; if(s>1024) return Math.round(s/1024)+' KB/s'; return Math.round(s)+' B/s'; }
   function fmtEta(e)   { if (!e||e<=0) return ''; if(e>3600) return Math.floor(e/3600)+'h '+Math.floor((e%3600)/60)+'m'; if(e>60) return Math.floor(e/60)+'m '+(e%60)+'s'; return Math.round(e)+'s'; }
   function fmtCount(n) { if (!n) return ''; if(n>=1000000) return (n/1000000).toFixed(1)+'M'; if(n>=1000) return Math.round(n/1000)+'K'; return String(n); }
+  function fmtSize(b)  { if (!b) return ''; if(b>=1073741824) return (b/1073741824).toFixed(1)+' GB'; if(b>=1048576) return Math.round(b/1048576)+' MB'; return Math.round(b/1024)+' KB'; }
 
   function onAnalyze() {
     const url = URL_INPUT.value.trim();
@@ -509,11 +1582,11 @@ document.addEventListener('DOMContentLoaded', () => {
     hideError();
     currentUrl = url; videoInfo = null;
     INFO_CARD.classList.remove('visible');
-    fmtChips.forEach(c => { c.disabled = true; }); DOWNLOAD_BTN.disabled = true;
+    setFmtEnabled(false); DOWNLOAD_BTN.disabled = true;
     PROGRESS_CARD.classList.remove('visible');
     setAnalyzing(true);
 
-    fetch('/api/analyze', {
+    api('/api/analyze', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({url}),
     })
@@ -528,48 +1601,62 @@ document.addEventListener('DOMContentLoaded', () => {
       if (data.duration) parts.push(data.duration);
       if (data.views) parts.push(fmtCount(data.views) + ' views');
       if (data.likes) parts.push(fmtCount(data.likes) + ' likes');
-      META_TEXT.textContent = parts.join('  |  ');
+      META_TEXT.textContent = parts.join('  ·  ');
       INFO_CARD.classList.add('visible');
-      fmtChips.forEach(c => { c.disabled = false; }); DOWNLOAD_BTN.disabled = false;
+      setFmtEnabled(true); DOWNLOAD_BTN.disabled = false;
       STATUS_TEXT.textContent = 'Ready to download';
       if (data.thumbnail) {
         THUMB_IMG.src = data.thumbnail; THUMB_IMG.style.display = 'block'; THUMB_PH.style.display = 'none';
       } else {
         THUMB_IMG.style.display = 'none'; THUMB_PH.style.display = 'flex';
+        THUMB_PH.textContent = 'No thumbnail';
       }
       buildQualityChips(data.qualities || []);
+      syncOptionRows();
     })
     .catch(err => { setAnalyzing(false); showError('Network error: ' + err.message); });
   }
 
   function startDownload(fmt) {
-    if (!videoInfo || !currentUrl || downloading) return;
+    const isFile = sourceMode === 'file';
+    if (downloading) return;
+    if (isFile ? !localFile : (!videoInfo || !currentUrl)) return;
     hideError();
     PROGRESS_CARD.classList.add('visible');
+    RESULT_ROW.classList.remove('visible');
     setDownloading(true);
     updateProgress(0, 0, 0, 'Starting...');
-    const quality = fmt === 'mp3' ? 'Best' : selectedQuality;
+    const body = isFile
+      ? {source: 'file', path: localFile.path, format: fmt, height: selectedHeight}
+      : {url: currentUrl, format: fmt,
+         quality: (fmt === 'mp3' || fmt === 'txt') ? 'Best' : selectedQuality};
+    if (fmt === 'txt') { body.model = selectedModel; body.lang = selectedLang; }
 
-    fetch('/api/download', {
+    api('/api/download', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({url: currentUrl, format: fmt, quality}),
+      body: JSON.stringify(body),
     })
     .then(r => r.json())
     .then(data => {
-      if (data.error) { setDownloading(false); showError(data.error); PROGRESS_CARD.classList.remove('visible'); return; }
+      if (data.error) {
+        setDownloading(false);
+        showError(data.error);
+        PROGRESS_CARD.classList.remove('visible');
+        return;
+      }
       taskId = data.task_id;
-      pollProgress(taskId, fmt);
+      pollProgress(taskId);
     })
     .catch(err => { setDownloading(false); showError('Network error: ' + err.message); PROGRESS_CARD.classList.remove('visible'); });
   }
 
-  function pollProgress(id, fmt) {
+  function pollProgress(id) {
     if (pollTimer) clearTimeout(pollTimer);
-    fetch('/api/progress/' + id)
+    api('/api/progress/' + id)
     .then(r => r.json())
     .then(data => {
       if (data.error && !data.done) { setDownloading(false); showError(data.error); PROGRESS_CARD.classList.remove('visible'); return; }
-      updateProgress(data.percent, data.speed, data.eta, data.status);
+      updateProgress(data.percent, data.speed, data.eta, data.status, data.rate);
       if (data.done) {
         if (data.cancelled) {
           setDownloading(false); STATUS_TEXT.textContent = 'Cancelled';
@@ -583,20 +1670,25 @@ document.addEventListener('DOMContentLoaded', () => {
           setDownloading(false); showError(data.error); PROGRESS_CARD.classList.remove('visible');
         } else {
           setDownloading(false);
-          STATUS_TEXT.textContent = 'Saved to ~/Downloads/Y2obi/';
+          const extras = data.extra_filenames || [];
+          STATUS_TEXT.textContent = extras.length
+            ? 'Saved .txt + .srt to ~/Downloads/Y2obi/'
+            : 'Saved to ~/Downloads/Y2obi/';
           SPEED_TEXT.textContent = 'Done';
-          toast('Done! Check ~/Downloads/Y2obi/');
+          RESULT_ROW.classList.toggle('visible', !!data.filename);
+          OPEN_FILE_BTN.textContent = extras.length ? 'Open transcript' : 'Open file';
+          toast(data.filename ? 'Saved: ' + data.filename : 'Done! Check ~/Downloads/Y2obi/');
         }
         return;
       }
-      pollTimer = setTimeout(() => pollProgress(id, fmt), 500);
+      pollTimer = setTimeout(() => pollProgress(id), 500);
     })
-    .catch(() => { pollTimer = setTimeout(() => pollProgress(id, fmt), 1000); });
+    .catch(() => { pollTimer = setTimeout(() => pollProgress(id), 1000); });
   }
 
   function onCancel() {
     if (!taskId) return;
-    fetch('/api/cancel/' + taskId, {method: 'POST'})
+    api('/api/cancel/' + taskId, {method: 'POST'})
       .then(() => STATUS_TEXT.textContent = 'Cancelling...')
       .catch(() => {});
   }

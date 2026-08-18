@@ -43,19 +43,93 @@ positive common to small unsigned apps, not malware:
 
 - Download YouTube videos — WebM/MP4 up to **4K**
 - Download **MP3 audio** at 320kbps
+- **Transcribe** any video to `.txt` + `.srt` — runs offline on your CPU, no API key, no upload
+- **Use your own files**: pick a local video or audio file to transcribe, convert to MP3, or convert/downscale to MP4
 - Quality selector: Best / 2160p / 1440p / 1080p / 720p / 480p / 360p
 - Real-time progress bar with speed and ETA
 - Skips re-downloading files that already exist
 - Pasting a URL with `&list=...` (mix/radio/autoplay links) downloads just that video, not the playlist
 - Cookie support for age-restricted content
+- **GPU transcription** via Vulkan (NVIDIA / AMD / Intel), with automatic CPU fallback
+- Settings panel: themes, processing device, speech models, cookies, storage
 - Glassmorphism UI powered by [Vitra CSS](https://vitracss.com)
 - Single `.exe` — no Python, no FFmpeg, no Node.js, no setup, fully offline after download
 
 ---
 
+## Transcription
+
+Pick **TXT** as the format and Y2obi transcribes the video with
+[whisper.cpp](https://github.com/ggerganov/whisper.cpp), writing a `.txt` and a
+timestamped `.srt` next to your other downloads. Works on any length — long
+audio is split into chunks internally so the transcript doesn't degrade.
+
+Two accuracy levels are offered up front:
+
+| Model | Size | Speed (CPU) |
+|-------|------|-------------|
+| Balanced | ~488 MB | roughly 1/5 of the video's length |
+| Best (default) | ~1.6 GB | roughly 1/4 of the video's length |
+
+Four more (Tiny, Base, Medium, Large v3) are a click away under **Models** in
+the footer, where you can download one ahead of time, see what each is costing
+you on disk, delete the ones you don't want, and set your default. Anything you
+download shows up as an accuracy chip.
+
+Models live in `%APPDATA%\Y2obi\models\` and are **never bundled in the exe** —
+you only ever download the one you choose. After that transcription is fully
+offline; nothing is uploaded anywhere. Language can be left on Auto or pinned
+to one of eight.
+
+**GPU acceleration** is on by default when your graphics card supports Vulkan —
+which covers NVIDIA, AMD and Intel, including integrated graphics. Measured on
+111.5 s of speech: 11.8 s on CPU versus 3.3 s on an RTX 5060 Ti, for the same
+transcript word for word. Y2obi asks the engine what it can use, shows the card
+it found in **Settings → Processing**, and falls back to the CPU on its own if
+the GPU is unavailable or fails mid-run. No drivers or toolkits to install.
+
+> On CPU only, transcription pins most of your cores and a one-hour video takes
+> roughly 15 minutes.
+
+---
+
+## Your own files
+
+Switch the source to **Local file** and pick anything ffmpeg can read — mp4,
+mkv, webm, mov, avi, mp3, m4a, wav, flac, ogg and friends. From there you can:
+
+- **Transcribe** it to `.txt` + `.srt`, same as a YouTube video
+- **Convert to MP3** — pulls the audio out at 192 kbps
+- **Convert to MP4** — keeps the original resolution or downscales to
+  1080p/720p/480p/360p
+
+An h264 file that needs no resize is remuxed rather than re-encoded, so it
+finishes in seconds instead of minutes. Results land in
+`%USERPROFILE%\Downloads\Y2obi\`, and a name that would collide gets a
+` (2)` suffix — your source file is never overwritten.
+
+The file is read straight off disk by the local ffmpeg. Nothing is uploaded and
+nothing is copied anywhere first.
+
+---
+
+## What it leaves on your disk
+
+Y2obi is portable — no installer, no registry keys, no services. It writes:
+
+| Path | What |
+|------|------|
+| `%USERPROFILE%\Downloads\Y2obi\` | your downloads and transcripts |
+| `%APPDATA%\Y2obi\` | settings, cookie jar, speech models |
+| `%LOCALAPPDATA%\Y2obi\webview\` | browser profile for the window |
+
+Temporary working files go to `%TEMP%` and are removed when the app closes. If
+it is ever force-killed, the next launch sweeps what was left behind — and only
+ever its own. Deleting those three folders removes Y2obi completely.
+
 ## Cookie Support
 
-Some videos require authentication (age-restricted, private). Upload a `cookies.txt` via the cookie badge in the app footer.
+Some videos require authentication (age-restricted, private). Open **Settings -> Cookies** to export them from Firefox, Edge, Brave or Chrome, or to upload a `cookies.txt` by hand.
 
 Cookies are stored in `%APPDATA%\Y2obi\cookies.txt` and persist across launches.
 
@@ -87,10 +161,15 @@ python -m PyInstaller build.spec
 # Output: dist/Y2obi.exe
 ```
 
-`build.spec` bundles `core/ffmpeg.exe` straight into the executable, so the
-built app needs no runtime download. Run `python main.py` once from source
-first if `core/ffmpeg.exe` doesn't exist yet — it'll be fetched automatically
-before you build.
+`build.spec` bundles `core/ffmpeg.exe` and `core/whisper/` straight into the
+executable, so the built app needs no runtime download for either. Run
+`python main.py` once from source first if `core/ffmpeg.exe` doesn't exist yet
+— it'll be fetched automatically before you build.
+
+`core/whisper/` (whisper-cli.exe plus the ggml DLLs, ~10 MB) is not fetched
+automatically — grab a whisper.cpp Windows release build and drop its contents
+there. Without it the app still builds and runs; the TXT format is simply
+greyed out.
 
 Releases are also built automatically by [GitHub Actions](.github/workflows/release.yml)
 on every `v*` tag push.
@@ -102,7 +181,8 @@ on every `v*` tag push.
 | Layer | Technology |
 |-------|-----------|
 | Download engine | yt-dlp |
-| Muxing | FFmpeg (auto-downloaded) |
+| Muxing / conversion | FFmpeg (bundled) |
+| Transcription | whisper.cpp (bundled) + Vulkan GPU backend |
 | Backend | Flask 3 (local, embedded) |
 | Frontend | Vitra CSS + pywebview |
 | Build | PyInstaller |
@@ -115,13 +195,17 @@ on every `v*` tag push.
 Y2obi/
 ├── app/
 │   ├── downloader.py     # yt-dlp wrapper — video/audio/mp3, cookies, progress hooks
+│   ├── cleanup.py        # sweeps leftovers from killed runs; reports partial downloads
+│   ├── converter.py      # ffmpeg wrapper for local files — probe, mp3/mp4, cancel
+│   ├── transcriber.py    # whisper.cpp wrapper — models, chunking, txt/srt output
 │   ├── server.py         # Flask app — API routes served to the embedded webview
-│   └── binaries.py       # FFmpeg resolution — bundled binary, PATH, or download fallback
+│   └── binaries.py       # FFmpeg + whisper resolution — bundled binary, PATH, or download fallback
 ├── desktop/
-│   ├── index.html        # UI — glassmorphism, particles, quality picker
+│   ├── index.html        # UI — glassmorphism, particles, options panel, models panel
 │   └── static/           # Vitra CSS/JS, icons
 ├── main.py               # Entry point — WebView2 check, FFmpeg, launch
 ├── run.bat               # Windows one-click setup + launch (source installs)
+├── tests/                # stdlib unittest suite — python -m unittest discover tests
 ├── build.spec            # PyInstaller config
 ├── version_info.txt      # Exe file/product metadata (embedded in build)
 └── requirements.txt      # Dependencies

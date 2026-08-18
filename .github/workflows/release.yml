@@ -34,6 +34,32 @@ jobs:
           Remove-Item ffmpeg.zip
           Remove-Item -Recurse -Force ffmpeg-extract
 
+      - name: Download whisper.cpp and the Vulkan backend
+        shell: pwsh
+        run: |
+          # Pinned on purpose: core/whisper/MANIFEST.json records the sha256 of
+          # every file below and build.spec refuses to build if one drifts. The
+          # Vulkan backend comes from llama.cpp because whisper.cpp publishes no
+          # Vulkan build for Windows; they share ggml and the pair is verified
+          # with tools/verify_whisper.py.
+          New-Item -ItemType Directory -Force -Path core\whisper | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip" -OutFile whisper.zip
+          Expand-Archive -Path whisper.zip -DestinationPath whisper-extract
+          Invoke-WebRequest -Uri "https://github.com/ggml-org/llama.cpp/releases/download/b10472/llama-b10472-bin-win-vulkan-x64.zip" -OutFile vulkan.zip
+          Expand-Archive -Path vulkan.zip -DestinationPath vulkan-extract
+          $fromWhisper = @('whisper-cli.exe','whisper.dll','ggml.dll','ggml-base.dll','ggml-cpu-haswell.dll','ggml-cpu-x64.dll')
+          foreach ($name in $fromWhisper) {
+            $src = Get-ChildItem -Path whisper-extract -Recurse -Filter $name | Select-Object -First 1
+            if (-not $src) { throw "$name not found in the whisper.cpp release" }
+            Copy-Item $src.FullName -Destination core\whisper          }
+          $vk = Get-ChildItem -Path vulkan-extract -Recurse -Filter ggml-vulkan.dll | Select-Object -First 1
+          if (-not $vk) { throw "ggml-vulkan.dll not found in the llama.cpp release" }
+          Copy-Item $vk.FullName -Destination core\whisper          Remove-Item whisper.zip, vulkan.zip
+          Remove-Item -Recurse -Force whisper-extract, vulkan-extract
+
+      - name: Run tests
+        run: python -m unittest discover tests
+
       - name: Build exe
         run: pyinstaller build.spec
 
