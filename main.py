@@ -73,9 +73,9 @@ def _arm_stall_watchdog():
     The timer is re-armed by a healthy Python thread, so it only fires when that
     thread stops getting scheduled.
 
-    Only armed under --debug. It costs two threads and an open file for the life
-    of the process, which is not a price a normal run should pay for a fault
-    nobody has reproduced since analyze stopped being able to hang for minutes.
+    Armed on every run again. It was moved behind --debug while the freeze was
+    only a hypothesis; it is now reproducible in ordinary use, and a fault nobody
+    can capture is worth more than two idle threads.
     """
     path = os.path.join(tempfile.gettempdir(), STALL_LOG)
     try:
@@ -308,6 +308,7 @@ def _run_signin_window():
 
 def main(argv=None):
     args = _parse_args(argv)
+    _arm_stall_watchdog()
     if args.signin:
         # No splash, no server, no single-instance lock: this is a short-lived
         # child of the running app.
@@ -316,9 +317,6 @@ def main(argv=None):
     if args.debug or args.log:
         log_path = args.log or os.path.join(tempfile.gettempdir(), "y2obi-debug.log")
         print(f"[Y2obi] logging to {_start_logging(log_path)}")
-        stall = _arm_stall_watchdog()
-        if stall:
-            print(f"[Y2obi] stall watchdog armed, would report to {stall}")
     if args.cpu:
         # Read by app/server.py when it resolves the processing device.
         os.environ["Y2OBI_FORCE_CPU"] = "1"
@@ -403,8 +401,12 @@ def main(argv=None):
             "Y2obi",
             url,
             width=940,
-            height=780,
-            min_size=(700, 560),
+            # 900, not 780: with the transcript rows and the progress card open
+            # the panel measures 782 px of content, and a 780 px window only
+            # leaves 688 px of viewport once Windows takes its chrome, so the
+            # bottom of the app needed scrolling to reach.
+            height=900,
+            min_size=(700, 620),
             resizable=True,
             js_api=api,
         )

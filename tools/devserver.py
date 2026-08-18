@@ -132,6 +132,10 @@ TXT_BLOCK = """
   $('transcriptHint').textContent = 'First run downloads the best model (~1620 MB), once.';
   $('statusText').textContent = 'Transcribing part 2/4...';
   $('speedText').textContent = '12m 30s';
+  const d = document.createElement('i'); d.id='dbgh';
+  setTimeout(() => { d.textContent = 'panel=' + Math.ceil(document.querySelector('.app-wrap').getBoundingClientRect().height)
+    + ' body=' + document.body.scrollHeight + ' viewport=' + window.innerHeight; }, 300);
+  document.body.appendChild(d);
 """
 
 

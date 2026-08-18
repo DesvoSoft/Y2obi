@@ -1,3 +1,8 @@
-yt-dlp>=2025.05.22
+# Floor and ceiling, not a hard pin. YouTube breaks extraction every few weeks
+# and yt-dlp fixes it within days, so a frozen exe with an exact pin stays broken
+# until a new build ships. The ceiling keeps a major rewrite of the extractor
+# from landing in a release untested: raise it deliberately, and run the suite,
+# which checks the player-client ladder against whatever version is installed.
+yt-dlp>=2026.6.9,<2027
 flask>=3.0.0
 pywebview>=5.0.0

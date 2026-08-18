@@ -208,9 +208,22 @@ def cookies_status():
     })
 
 
+# Cookie names YouTube only sets once you are actually signed in.
+SESSION_COOKIES = frozenset({
+    "SID", "HSID", "SSID", "APISID", "SAPISID", "LOGIN_INFO",
+    "__Secure-1PSID", "__Secure-3PSID", "__Secure-1PSIDTS", "__Secure-3PSIDTS",
+})
+
+
 def _signin_profile():
+    """The Chromium profile the sign-in window writes.
+
+    pywebview is given the parent directory as storage_path and WebView2 creates
+    its profile in an EBWebView subdirectory of it, which is the level yt-dlp
+    expects: Local State beside Default/Network/Cookies.
+    """
     return os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()),
-                        "Y2obi", "ytsession")
+                        "Y2obi", "ytsession", "EBWebView")
 
 
 def _harvest_signin_cookies():
@@ -229,15 +242,19 @@ def _harvest_signin_cookies():
     if not os.path.isdir(profile):
         return 0
     jar = yt_dlp.cookies.extract_cookies_from_browser("chrome", profile=profile)
-    youtube = [c for c in jar if "youtube.com" in (c.domain or "")]
-    if not youtube:
+    # Merely visiting YouTube leaves cookies (VISITOR_INFO and friends), so
+    # counting those would report success for someone who never signed in and
+    # then fail on the very next video. Only a session cookie means anything.
+    signed_in = [c for c in jar
+                 if "youtube.com" in (c.domain or "") and c.name in SESSION_COOKIES]
+    if not signed_in:
         return 0
     os.makedirs(os.path.dirname(COOKIES_PATH), exist_ok=True)
     moz = http.cookiejar.MozillaCookieJar(COOKIES_PATH)
     for cookie in jar:
         moz.set_cookie(cookie)
     moz.save(ignore_discard=True, ignore_expires=True)
-    return len(youtube)
+    return len(signed_in)
 
 
 @app.route("/api/cookies/signin", methods=["POST"])

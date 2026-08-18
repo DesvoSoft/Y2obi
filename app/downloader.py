@@ -2,10 +2,11 @@ import yt_dlp
 import os
 import traceback
 
-try:
-    import bgutil_ytdlp_pot_provider  # registers itself as yt-dlp POT provider
-except ImportError:
-    pass
+# No PO token provider is bundled. The import used to sit here behind a
+# try/except, which meant this machine could have one and a CI build never
+# would: the same source producing quietly different binaries. If YouTube starts
+# demanding PO tokens, the answer is the in-app sign-in window, not a plugin that
+# drags in a JavaScript runtime.
 
 QUALITY_MAP = {
     "Best":  (None, None),
