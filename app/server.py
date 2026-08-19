@@ -956,12 +956,32 @@ def serve_file(task_id):
     return send_file(task["path"], as_attachment=True, download_name=os.path.basename(task["path"]))
 
 
+def _explorer_command(target):
+    """Build the explorer.exe command line for `target`.
+
+    A list must not be passed to Popen here: subprocess would apply the MSVC
+    quoting rules to each argument, wrapping `/select,C:\\...\\My Video.mp4` in
+    quotes when the filename has a space. explorer.exe parses its command line
+    with its own rules, so a quoted `/select,` token is never recognised and it
+    silently opens the user's Documents folder instead. Hand-build the command
+    line with the quotes around the path only.
+    """
+    norm = os.path.normpath(target)
+    if os.path.isdir(norm):
+        return f'explorer "{norm}"'
+    return f'explorer /select,"{norm}"'
+
+
 @app.route("/api/open_folder", methods=["POST"])
 def open_folder():
     """Open the output folder in Explorer — desktop only."""
     import subprocess
     try:
-        subprocess.Popen(["explorer", DOWNLOAD_DIR],
+        # Explorer silently opens Documents when handed a path that does not
+        # exist, so create the folder first rather than let the user chase a
+        # phantom location before the first download.
+        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        subprocess.Popen(_explorer_command(DOWNLOAD_DIR),
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except Exception:
         pass
@@ -984,8 +1004,7 @@ def open_file(task_id):
     import subprocess
     try:
         if request.args.get("reveal"):
-            # /select, needs the comma glued to the path, hence one argument.
-            subprocess.Popen(["explorer", f"/select,{os.path.normpath(path)}"],
+            subprocess.Popen(_explorer_command(path),
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         else:
             os.startfile(path)

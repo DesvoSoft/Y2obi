@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -90,6 +91,80 @@ class OpenFile(unittest.TestCase):
     def test_vanished_file_is_404(self):
         srv.tasks["t1"] = {"path": r"C:\definitely\not\here.mp4", "done": True}
         self.assertEqual(self.c.post("/api/open_file/t1").status_code, 404)
+
+
+class ExplorerCommand(unittest.TestCase):
+    """The explorer.exe command line must keep the path unquoted as a whole.
+
+    subprocess would wrap `/select,C:\\...\\My Video.mp4` in quotes when the
+    filename has a space, and explorer.exe (which parses its own command line,
+    not MSVC rules) then fails to resolve the path and opens the user's
+    Documents folder instead. The command must be a single hand-built string
+    with the quotes around the path only.
+    """
+
+    def setUp(self):
+        self._saved = srv._session_token
+        srv._session_token = None
+        self.c = srv.app.test_client()
+        srv.tasks.clear()
+        self.dir = tempfile.mkdtemp(prefix="y2obi_exp_")
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+
+    def tearDown(self):
+        srv._session_token = self._saved
+        srv.tasks.clear()
+
+    def test_reveal_quotes_only_the_path(self):
+        f = os.path.join(self.dir, "My Video.mp4")
+        with open(f, "w", encoding="utf-8") as fh:
+            fh.write("x")
+        cmd = srv._explorer_command(f)
+        self.assertEqual(cmd, f'explorer /select,"{os.path.normpath(f)}"')
+        self.assertNotIn(f'"/select,', cmd)
+
+    def test_reveal_without_spaces_keeps_the_comma_glued(self):
+        f = os.path.join(self.dir, "plain.mp4")
+        with open(f, "w", encoding="utf-8") as fh:
+            fh.write("x")
+        cmd = srv._explorer_command(f)
+        self.assertEqual(cmd, f'explorer /select,"{os.path.normpath(f)}"')
+
+    def test_open_folder_uses_no_select_switch(self):
+        cmd = srv._explorer_command(self.dir)
+        self.assertEqual(cmd, f'explorer "{os.path.normpath(self.dir)}"')
+        self.assertNotIn("/select", cmd)
+
+    def test_open_file_reveal_passes_quoted_path_to_popen(self):
+        f = os.path.join(self.dir, "My Video.mp4")
+        with open(f, "w", encoding="utf-8") as fh:
+            fh.write("x")
+        srv.tasks["t1"] = {"path": f, "done": True}
+        with mock.patch("subprocess.Popen") as p:
+            r = self.c.post("/api/open_file/t1?reveal=1")
+        self.assertEqual(r.status_code, 200)
+        args = p.call_args[0][0]
+        self.assertIsInstance(args, str)
+        self.assertEqual(args, srv._explorer_command(f))
+
+    def test_open_folder_passes_quoted_path_to_popen(self):
+        with mock.patch("subprocess.Popen") as p:
+            r = self.c.post("/api/open_folder")
+        self.assertEqual(r.status_code, 200)
+        args = p.call_args[0][0]
+        self.assertIsInstance(args, str)
+        self.assertEqual(args, f'explorer "{os.path.normpath(srv.DOWNLOAD_DIR)}"')
+
+    def test_open_folder_creates_the_directory_first(self):
+        target = os.path.join(tempfile.gettempdir(), "y2obi_open_probe")
+        shutil.rmtree(target, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, target, ignore_errors=True)
+        self.assertFalse(os.path.isdir(target))
+        with mock.patch("subprocess.Popen"):
+            with mock.patch.object(srv, "DOWNLOAD_DIR", target):
+                r = self.c.post("/api/open_folder")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(os.path.isdir(target))
 
 
 class LocalFileRoutes(unittest.TestCase):

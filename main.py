@@ -55,7 +55,7 @@ def _install_webview2(progress_cb):
             pass
 
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 # How long Python may stop making progress before we consider the app wedged.
 # Nothing legitimate blocks this long: the slow work (yt-dlp, ffmpeg, whisper)
