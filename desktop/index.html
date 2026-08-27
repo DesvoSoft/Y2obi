@@ -1336,6 +1336,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <div class="model-meta" id="setLogMeta"></div>
             </div>
             <div class="model-actions">
+              <button class="mini-btn" id="setCopyDiag">Copy</button>
               <button class="mini-btn" id="setOpenLogs">Open</button>
             </div>
           </div>
@@ -1359,6 +1360,16 @@ document.addEventListener('DOMContentLoaded', () => {
       // than a path someone has to be talked through over chat.
       panel.querySelector('#setOpenLogs').addEventListener('click', () => {
         api('/api/open_logs', {method: 'POST'}).catch(() => {});
+      });
+
+      // "It does not work" is not actionable, and talking someone through where
+      // %LOCALAPPDATA% lives is worse. One click puts the build facts and the
+      // tail of the log on the clipboard, ready to paste into an issue.
+      panel.querySelector('#setCopyDiag').addEventListener('click', () => {
+        const btn = panel.querySelector('#setCopyDiag');
+        api('/api/diagnostics').then(r => r.json()).then(d => copyText(d.text))
+          .then(() => { btn.textContent = 'Copied'; toast('Diagnostics copied'); })
+          .catch(() => toast('Could not copy the diagnostics'));
       });
 
       // Appearance. Two axes instead of one list: a colour family and a
@@ -1883,6 +1894,32 @@ document.addEventListener('DOMContentLoaded', () => {
     w.document.write(`<pre style="background:#111;color:#0f0;padding:20px;font:13px/1.5 monospace;white-space:pre-wrap">${escHtml(lastError)}</pre>`);
     w.document.close();
   }
+  // 127.0.0.1 counts as a secure context in Chromium, so the async clipboard is
+  // available -- but it still fails when the window does not have focus, and a
+  // Settings panel is exactly where that happens. The textarea path is the
+  // fallback, not the exception.
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
+    }
+    return legacyCopy(text);
+  }
+
+  function legacyCopy(text) {
+    return new Promise((resolve, reject) => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:-1000px;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      ta.remove();
+      ok ? resolve() : reject(new Error('copy refused'));
+    });
+  }
+
   function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
   function buildQualityChips(qualities) {

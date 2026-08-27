@@ -1031,6 +1031,33 @@ def update_status():
     return jsonify(updates.cached())
 
 
+@app.route("/api/diagnostics")
+def diagnostics_text():
+    """The tail of the log plus the build facts, ready to paste into an issue.
+
+    "It does not work" is not actionable and neither is talking someone through
+    where %LOCALAPPDATA% is. This is the same content the log already holds --
+    scrubbed on the way in, so the session token is not in it either.
+    """
+    lines = [f"Y2obi {VERSION}", f"frozen: {bool(getattr(sys, 'frozen', False))}",
+             f"python: {sys.version.split()[0]}"]
+    try:
+        import platform
+        lines.append(f"windows: {platform.platform()}")
+    except Exception:
+        pass
+    lines.append(f"whisper: {get_whisper_cli() or 'not in this build'}")
+    lines.append(f"device: {_device()}")
+    try:
+        with open(diagnostics.log_path(), encoding="utf-8", errors="replace") as f:
+            tail = f.read().splitlines()[-120:]
+    except OSError as e:
+        tail = [f"(no log could be read: {e})"]
+    body = ("\n".join(lines) + "\n\n--- last 120 log lines ---\n"
+            + "\n".join(tail))
+    return jsonify({"text": body})
+
+
 @app.route("/api/open_logs", methods=["POST"])
 def open_logs():
     """Reveal the log folder. No path comes from the client."""

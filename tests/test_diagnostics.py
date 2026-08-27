@@ -101,5 +101,23 @@ class Location(unittest.TestCase):
                 os.environ["Y2OBI_LOG_DIR"] = old
 
 
+class PasteableReport(unittest.TestCase):
+    """/api/diagnostics is what the Settings Copy button sends to the clipboard."""
+
+    def setUp(self):
+        from app import server as srv
+        self.c = srv.app.test_client()
+
+    def test_it_returns_something_pasteable(self):
+        body = self.c.get("/api/diagnostics").get_json()["text"]
+        self.assertIn("Y2obi", body)
+        self.assertIn("log lines", body)
+
+    def test_it_names_the_build_and_the_machine(self):
+        body = self.c.get("/api/diagnostics").get_json()["text"]
+        for field in ("frozen:", "python:", "whisper:", "device:"):
+            self.assertIn(field, body)
+
+
 if __name__ == "__main__":
     unittest.main()
