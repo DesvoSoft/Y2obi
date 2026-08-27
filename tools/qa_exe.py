@@ -206,6 +206,29 @@ def main():
         check("the bundled ffmpeg probes a local file",
               status == 200 and bool(probe.get("duration")), str(probe)[:90])
 
+        print("\n-- trimming --")
+        for label, body, want in [
+            ("a mistyped time is refused",
+             {"clip_start": "banana", "clip_end": "2:00"}, 400),
+            ("a backwards range is refused",
+             {"clip_start": "5:00", "clip_end": "1:00"}, 400),
+        ]:
+            body.update({"url": "https://youtu.be/x", "format": "mp4"})
+            status, _ = app.api("/api/download", "POST", body)
+            check(label, status == want, f"got {status}")
+
+        print("\n-- update check --")
+        status, upd = app.api("/api/update")
+        check("the update route answers", status == 200 and "available" in upd)
+        check("it is on by default", cfg.get("update_check") is True)
+
+        print("\n-- diagnostics --")
+        status, diag = app.api("/api/diagnostics")
+        text = diag.get("text", "") if isinstance(diag, dict) else ""
+        check("diagnostics are pasteable", status == 200 and "Y2obi" in text)
+        check("they carry no session token", app.token not in text,
+              "TOKEN LEAKED" if app.token in text else "")
+
         print("\n-- a real job, end to end --")
         status, started = app.api("/api/download", "POST",
                                   {"source": "file", "path": sample, "format": "mp3"})

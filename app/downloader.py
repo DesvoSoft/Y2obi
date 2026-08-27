@@ -252,6 +252,74 @@ def _parse_formats(info):
     return quality_labels, has_audio_only
 
 
+class ClipError(ValueError):
+    """The requested section makes no sense. Carries a message for the user."""
+
+
+def parse_timecode(text):
+    """Seconds from "90", "1:30", "01:30" or "1:02:03". None for blank.
+
+    Accepts what people actually type when copying a timestamp out of a YouTube
+    comment, which is anything from a bare number of seconds to h:mm:ss. Raises
+    ClipError rather than guessing, because guessing here silently downloads the
+    wrong part of a three-hour video.
+    """
+    if text is None:
+        return None
+    text = str(text).strip()
+    if not text:
+        return None
+    parts = text.split(":")
+    if len(parts) > 3:
+        raise ClipError(f"'{text}' is not a time. Use m:ss, h:mm:ss, or seconds.")
+    total = 0
+    for part in parts:
+        part = part.strip()
+        if not part.isdigit():
+            raise ClipError(f"'{text}' is not a time. Use m:ss, h:mm:ss, or seconds.")
+        total = total * 60 + int(part)
+    # Only the leading field may exceed 59: "1:75" is a typo, not 2m15s, and
+    # treating it as one would quietly shift the whole clip.
+    if len(parts) > 1 and any(int(p) > 59 for p in parts[1:]):
+        raise ClipError(f"'{text}' has a minutes or seconds field over 59.")
+    return total
+
+
+def parse_clip(start_text, end_text):
+    """(start, end) in seconds, or None when neither was given."""
+    start = parse_timecode(start_text)
+    end = parse_timecode(end_text)
+    if start is None and end is None:
+        return None
+    start = start or 0
+    # No end means "to the end of the video". yt-dlp wants a number, and any
+    # value past the real duration is clamped by the extractor.
+    if end is None:
+        end = float("inf")
+    if end <= start:
+        raise ClipError("The end of the clip has to come after its start.")
+    return (start, end)
+
+
+def _stamp(seconds):
+    seconds = int(seconds)
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}h{m:02d}m{s:02d}s" if h else f"{m}m{s:02d}s"
+
+
+def clip_label(clip):
+    """A filename fragment for a clip, so it cannot overwrite the full download.
+
+    Colons are not legal in Windows filenames, hence 12m30s rather than 12:30.
+    """
+    if not clip:
+        return ""
+    start, end = clip
+    tail = "end" if end == float("inf") else _stamp(end)
+    return f" [{_stamp(start)}-{tail}]"
+
+
 class Downloader:
     def __init__(self, ffmpeg_path="ffmpeg", cookies=None):
         self.ffmpeg_path = ffmpeg_path
@@ -387,6 +455,22 @@ class Downloader:
             pass
         return None
 
+    def _clip_opts(self, clip):
+        """yt-dlp options for a partial download, or {} for the whole thing.
+
+        force_keyframes_at_cuts costs a re-encode of the clip and is worth it:
+        without it the cut lands on the nearest preceding keyframe, which on
+        YouTube can be seconds early and looks to the user like the times were
+        ignored.
+        """
+        if not clip:
+            return {}
+        start, end = clip
+        return {
+            'download_ranges': yt_dlp.utils.download_range_func(None, [(start, end)]),
+            'force_keyframes_at_cuts': True,
+        }
+
     def _run_download(self, url, template, fmt_opts, what="download"):
         """Download `url` into `template`, walking PLAYER_CLIENTS on failure.
 
@@ -430,27 +514,29 @@ class Downloader:
             ) from last_err
         raise DownloadError(f"YouTube download error: {last_err}") from last_err
 
-    def download_mp4(self, url, output_dir, quality="Best"):
+    def download_mp4(self, url, output_dir, quality="Best", clip=None):
         qlabel = f" [{quality}]" if quality != "Best" else ""
-        template = os.path.join(output_dir, f"%(title)s{qlabel}.%(ext)s")
+        template = os.path.join(output_dir, f"%(title)s{qlabel}{clip_label(clip)}.%(ext)s")
         max_h, _ = QUALITY_MAP.get(quality, (None, None))
         fmt_sort = [f"height:{max_h}", "ext", "vcodec", "acodec"] if max_h else ["res", "ext", "vcodec", "acodec"]
         return self._run_download(url, template, {
             'format': f"bestvideo[height<={max_h}]+bestaudio/best[height<={max_h}]" if max_h else "bestvideo+bestaudio/best",
             'format_sort': fmt_sort,
             'merge_output_format': 'mp4',
+            **self._clip_opts(clip),
         })
 
-    def download_webm(self, url, output_dir, quality="Best"):
+    def download_webm(self, url, output_dir, quality="Best", clip=None):
         qlabel = f" [{quality}]" if quality != "Best" else ""
-        template = os.path.join(output_dir, f"%(title)s{qlabel}.%(ext)s")
+        template = os.path.join(output_dir, f"%(title)s{qlabel}{clip_label(clip)}.%(ext)s")
         return self._run_download(url, template, {
             'format': QUALITY_MAP_WEBM.get(quality, QUALITY_MAP_WEBM["Best"]),
             'merge_output_format': 'webm',
+            **self._clip_opts(clip),
         })
 
-    def download_mp3(self, url, output_dir):
-        template = os.path.join(output_dir, "%(title)s.%(ext)s")
+    def download_mp3(self, url, output_dir, clip=None):
+        template = os.path.join(output_dir, f"%(title)s{clip_label(clip)}.%(ext)s")
         return self._run_download(url, template, {
             'format': AUDIO_FORMAT,
             'postprocessors': [{
@@ -458,9 +544,10 @@ class Downloader:
                 'preferredcodec': 'mp3',
                 'preferredquality': '320',
             }],
+            **self._clip_opts(clip),
         })
 
-    def download_audio_raw(self, url, output_dir):
+    def download_audio_raw(self, url, output_dir, clip=None):
         """bestaudio with no re-encode — input for transcription.
 
         Deliberately not download_mp3(): transcription decodes to 16 kHz mono
@@ -468,7 +555,8 @@ class Downloader:
         wasted ffmpeg time on a long video and loses quality twice.
         """
         template = os.path.join(output_dir, "%(title)s.%(ext)s")
-        return self._run_download(url, template, {'format': AUDIO_FORMAT},
+        return self._run_download(url, template,
+                                  {'format': AUDIO_FORMAT, **self._clip_opts(clip)},
                                   what="audio download")
 
     def _hook(self, d):

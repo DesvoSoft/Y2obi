@@ -354,6 +354,23 @@
     background: var(--bad-bg); color: var(--bad-fg); border: 1px solid var(--bad-bd); }
   .actions-row.busy .btn-cancel { display: block; }
 
+  /* --- trim -------------------------------------------------------------- */
+  .clip-set { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .clip-toggle { display: flex; align-items: center; gap: 7px; cursor: pointer;
+    font-size: 13px; color: var(--vitra-color-text-secondary); white-space: nowrap; }
+  .clip-toggle input { accent-color: var(--vitra-color-accent); }
+  .clip-time {
+    width: 76px; padding: 5px 8px; border-radius: 8px;
+    background: var(--field-bg); color: var(--vitra-color-text-primary);
+    border: 1px solid var(--card-bd); font-size: 13px;
+    font-variant-numeric: tabular-nums; text-align: center;
+  }
+  .clip-time:disabled { opacity: .45; }
+  .clip-time.bad { border-color: var(--bad-bd); color: var(--bad-fg); }
+  .clip-sep { font-size: 13px; color: var(--faint); }
+  .clip-note { font-size: 12.5px; color: var(--faint); }
+  .clip-note.bad { color: var(--bad-fg); }
+
   /* --- progress --------------------------------------------------------- */
   .progress-card { display: none; padding: 12px 16px 14px; }
   .progress-card.visible { display: block; }
@@ -640,6 +657,21 @@
       <div class="chip-set" id="qualityChips" role="radiogroup" aria-label="Quality"></div>
     </div>
 
+    <div class="opt-row" id="clipRow">
+      <span class="opt-label">Trim</span>
+      <div class="clip-set">
+        <label class="clip-toggle">
+          <input type="checkbox" id="clipOn"> Just part of it
+        </label>
+        <input class="clip-time" id="clipStart" placeholder="0:00" disabled
+               aria-label="Start time" autocomplete="off" spellcheck="false">
+        <span class="clip-sep">to</span>
+        <input class="clip-time" id="clipEnd" placeholder="end" disabled
+               aria-label="End time" autocomplete="off" spellcheck="false">
+        <span class="clip-note" id="clipNote"></span>
+      </div>
+    </div>
+
     <div class="opt-row hidden" id="modelRow">
       <span class="opt-label">Accuracy</span>
       <div class="chip-set" id="modelChips" role="radiogroup" aria-label="Accuracy"></div>
@@ -760,6 +792,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const LANG_ROW     = $('langRow');
   const MODEL_CHIPS  = $('modelChips');
   const LANG_CHIPS   = $('langChips');
+  const CLIP_ROW     = $('clipRow');
+  const CLIP_ON      = $('clipOn');
+  const CLIP_START   = $('clipStart');
+  const CLIP_END     = $('clipEnd');
+  const CLIP_NOTE    = $('clipNote');
   const TS_ROW       = $('tsRow');
   const TS_CHIPS     = $('tsChips');
   const TRANSCRIPT_HINT = $('transcriptHint');
@@ -993,6 +1030,9 @@ document.addEventListener('DOMContentLoaded', () => {
     MODEL_ROW.classList.toggle('hidden', !isTxt);
     LANG_ROW.classList.toggle('hidden', !isTxt);
     TS_ROW.classList.toggle('hidden', !isTxt);
+    // Local files go through Converter, which cannot take a range, so the row
+    // is not offered rather than being offered and refused.
+    CLIP_ROW.classList.toggle('hidden', isFile);
     DOWNLOAD_BTN.textContent = isTxt ? 'Transcribe' : (isFile ? 'Convert' : 'Download');
     if (isTxt) updateTranscriptHint();
   }
@@ -1061,6 +1101,59 @@ document.addEventListener('DOMContentLoaded', () => {
   const TS_OPTIONS = [[0, 'None'], [60, 'Every minute'], [120, 'Every 2 min'],
                       [300, 'Every 5 min']];
   let selectedTs = 0;
+
+  // Trimming. The times are validated in the page as well as on the server:
+  // the server has to reject them anyway, but catching a typo before the job
+  // starts is the difference between a message and a wasted download.
+  function parseTimecode(text) {
+    text = (text || '').trim();
+    if (!text) return null;
+    const parts = text.split(':');
+    if (parts.length > 3) return NaN;
+    let total = 0;
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i].trim();
+      if (!/^\d+$/.test(p)) return NaN;
+      // Only the leading field may pass 59: "1:75" is a typo, not 2m15s, and
+      // reading it as one would quietly shift the whole clip.
+      if (i > 0 && Number(p) > 59) return NaN;
+      total = total * 60 + Number(p);
+    }
+    return total;
+  }
+
+  function clipState() {
+    if (!CLIP_ON.checked) return {ok: true, start: '', end: ''};
+    const s = parseTimecode(CLIP_START.value);
+    const e = parseTimecode(CLIP_END.value);
+    const bad = Number.isNaN(s) || Number.isNaN(e);
+    const backwards = !bad && s !== null && e !== null && e <= s;
+    return {
+      ok: !bad && !backwards,
+      why: bad ? 'Use m:ss, h:mm:ss, or seconds.'
+                : backwards ? 'The end has to come after the start.' : '',
+      start: CLIP_START.value.trim(),
+      end: CLIP_END.value.trim(),
+      badStart: Number.isNaN(s), badEnd: Number.isNaN(e) || backwards,
+    };
+  }
+
+  function refreshClip() {
+    const on = CLIP_ON.checked;
+    CLIP_START.disabled = !on;
+    CLIP_END.disabled = !on;
+    const st = clipState();
+    CLIP_START.classList.toggle('bad', on && !!st.badStart);
+    CLIP_END.classList.toggle('bad', on && !!st.badEnd);
+    CLIP_NOTE.classList.toggle('bad', on && !st.ok);
+    CLIP_NOTE.textContent = !on ? ''
+      : st.ok ? 'Leave the end blank to go to the end of the video.' : st.why;
+    DOWNLOAD_BTN.disabled = downloading || !st.ok || !readyToStart();
+  }
+
+  CLIP_ON.addEventListener('change', refreshClip);
+  CLIP_START.addEventListener('input', refreshClip);
+  CLIP_END.addEventListener('input', refreshClip);
 
   function saveConfig(patch) {
     api('/api/config', {
@@ -1970,12 +2063,19 @@ document.addEventListener('DOMContentLoaded', () => {
       ? 'That file has no video track' : '';
   }
 
+  function readyToStart() {
+    return sourceMode === 'file' ? !!localFile : !!videoInfo;
+  }
+
   function setDownloading(busy) {
     downloading = busy;
     refreshFx();
-    const ready = sourceMode === 'file' ? !!localFile : !!videoInfo;
+    const ready = readyToStart();
     setFmtEnabled(!busy && ready);
-    DOWNLOAD_BTN.disabled = busy || !ready;
+    DOWNLOAD_BTN.disabled = busy || !ready || !clipState().ok;
+    CLIP_ON.disabled = busy;
+    CLIP_START.disabled = busy || !CLIP_ON.checked;
+    CLIP_END.disabled = busy || !CLIP_ON.checked;
     PICK_FILE_BTN.disabled = busy;
     SOURCE_TABS.querySelectorAll('.src-tab').forEach(t => t.style.pointerEvents = busy ? 'none' : '');
     ANALYZE_BTN.disabled = busy;
@@ -2098,6 +2198,11 @@ document.addEventListener('DOMContentLoaded', () => {
       : {url: currentUrl, format: fmt,
          quality: (fmt === 'mp3' || fmt === 'txt') ? 'Best' : selectedQuality};
     if (fmt === 'txt') { body.model = selectedModel; body.lang = selectedLang; }
+    const clip = clipState();
+    if (CLIP_ON.checked && clip.ok && (clip.start || clip.end)) {
+      body.clip_start = clip.start;
+      body.clip_end = clip.end;
+    }
 
     api('/api/download', {
       method: 'POST', headers: {'Content-Type': 'application/json'},

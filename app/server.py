@@ -18,7 +18,7 @@ from app.downloader import (Downloader, DownloadError, AuthRequired,
                             StreamsUnavailable, PlaylistError,
                             export_cookies_from_browser, installed_browsers,
                             _parse_formats)
-from app.downloader import has_session_cookies
+from app.downloader import has_session_cookies, parse_clip, ClipError
 from app import cleanup
 from app import converter
 from app import transcriber
@@ -680,7 +680,8 @@ def _set(task_id, **kw):
             t.update(kw)
 
 
-def _run_transcribe(task_id, src, model, lang, is_file=False, ts_interval=0):
+def _run_transcribe(task_id, src, model, lang, is_file=False, ts_interval=0,
+                    clip=None):
     """Run whisper over `src` and write .txt + .srt to DOWNLOAD_DIR.
 
     `src` is a YouTube URL, or a local path when `is_file` — a local file needs
@@ -736,7 +737,7 @@ def _run_transcribe(task_id, src, model, lang, is_file=False, ts_interval=0):
                 ),
                 status=lambda msg: _set(task_id, status="Downloading audio..."),
             )
-            audio_path = dl.download_audio_raw(src, tmp_dir)
+            audio_path = dl.download_audio_raw(src, tmp_dir, clip)
             _set(task_id, _dl=None, speed=0)
         if cancel.is_set():
             raise transcriber.Cancelled()
@@ -867,6 +868,17 @@ def start_download():
 
     if fmt not in ("mp4", "mp3", "webm", "txt"):
         return jsonify({"error": f"Unknown format: {fmt}"}), 400
+
+    # Rejected here rather than deep inside yt-dlp: a bad time silently
+    # downloading the wrong part of a three-hour video is the failure worth
+    # preventing, and the message has to reach the user before the job starts.
+    try:
+        clip = parse_clip(data.get("clip_start"), data.get("clip_end"))
+    except ClipError as e:
+        return jsonify({"error": str(e)}), 400
+    if clip and is_file:
+        # Local files go through Converter, which has no range support yet.
+        return jsonify({"error": "Trimming is only available for YouTube downloads"}), 400
     if fmt == "txt" and not get_whisper_cli():
         return jsonify({"error": "Transcription engine not available in this build"}), 400
 
@@ -894,7 +906,7 @@ def start_download():
             target=_run_transcribe,
             args=(task_id, path if is_file else url,
                   data.get("model") or transcriber.DEFAULT_MODEL,
-                  data.get("lang") or "auto", is_file, _ts_interval()),
+                  data.get("lang") or "auto", is_file, _ts_interval(), clip),
             daemon=True,
         ).start()
         return jsonify({"task_id": task_id})
@@ -915,10 +927,10 @@ def start_download():
 
         def _go(d):
             if fmt == "mp4":
-                return d.download_mp4(url, DOWNLOAD_DIR, quality)
+                return d.download_mp4(url, DOWNLOAD_DIR, quality, clip)
             if fmt == "webm":
-                return d.download_webm(url, DOWNLOAD_DIR, quality)
-            return d.download_mp3(url, DOWNLOAD_DIR)
+                return d.download_webm(url, DOWNLOAD_DIR, quality, clip)
+            return d.download_mp3(url, DOWNLOAD_DIR, clip)
 
         try:
             try:
