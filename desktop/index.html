@@ -89,6 +89,23 @@
     75%  { transform: translate(-40px,-30px) scale(1.1); opacity: .85; }
     100% { transform: translate(0,0) scale(1); opacity: .5; }
   }
+  /* The decoration is the first thing that gives up. 78 nodes each running an
+     infinite animation are free while the app is idle and are not free while
+     whisper holds every core -- which is exactly when the user is watching the
+     progress bar and cares whether it moves smoothly. Pausing beats removing:
+     a paused animation stops ticking, and nothing has to be respawned after. */
+  #fxLayer.paused .vitra-particle { animation-play-state: paused; }
+
+  /* Asked the OS, not guessed. Someone who set "show animations" off did so for
+     a reason, and a drifting particle field is the definition of decorative. */
+  @media (prefers-reduced-motion: reduce) {
+    #fxLayer { display: none; }
+    *, *::before, *::after {
+      animation-duration: 1ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 1ms !important;
+    }
+  }
   #fxLayer .vitra-particle {
     animation: particle-drift var(--vitra-particle-speed) ease-in-out infinite;
     animation-delay: calc(var(--i, 0) * -0.3s);
@@ -635,14 +652,25 @@ document.addEventListener('DOMContentLoaded', () => {
   Vitra.theme.init({ defaultTheme: 'dark', persist: true });
   // Particles live behind the panel: spawning them inside .app-wrap put drifting
   // dots on top of the title and progress text.
+  const REDUCED_MOTION = window.matchMedia
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const _pc = { container: '#fxLayer' };
-  Vitra.particles.spawn(34, { ..._pc, color: 'var(--vitra-color-accent)', size: 5 });
-  Vitra.particles.spawn(26, { ..._pc, color: '#7c4dff', size: 4 });
-  Vitra.particles.spawn(18, { ..._pc, color: '#ff6b9d', size: 3 });
-  document.querySelectorAll('#fxLayer .vitra-particle').forEach(p => {
-    p.style.animationDuration = (5 + Math.random() * 8) + 's';
-    p.style.animationDelay   = -(Math.random() * 10) + 's';
-  });
+  // All three shades derive from the accent. They used to be the accent plus a
+  // literal purple and a literal pink, which looked deliberate only on the theme
+  // they were picked against.
+  // Not spawned at all under reduced motion: the CSS hides the layer, but 78
+  // nodes the compositor still has to consider is a cost with nothing to show
+  // for it.
+  if (!REDUCED_MOTION) {
+    Vitra.particles.spawn(34, { ..._pc, color: 'var(--vitra-color-accent)', size: 5 });
+    Vitra.particles.spawn(26, { ..._pc, color: 'var(--fx-2)', size: 4 });
+    Vitra.particles.spawn(18, { ..._pc, color: 'var(--fx-3)', size: 3 });
+    document.querySelectorAll('#fxLayer .vitra-particle').forEach(p => {
+      p.style.animationDuration = (5 + Math.random() * 8) + 's';
+      p.style.animationDelay   = -(Math.random() * 10) + 's';
+    });
+  }
+
 
   // Per-session token, handed over in the page URL by main.py. Every /api/ call
   // must carry it; without it the server answers 403.
@@ -707,6 +735,17 @@ document.addEventListener('DOMContentLoaded', () => {
   let selectedHeight = null;    // null = keep the source resolution
   let videoInfo = null, currentUrl = null, downloading = false;
   let lastBrowsers = null;   // remembered so the audio warning can offer the fix
+  // Three reasons to stop the drift, one switch. Minimised counts because
+  // WebView2 goes on animating a window nobody can see. Defined here rather than
+  // beside the spawn so it is below `downloading` -- reading a `let` from a
+  // function hoisted above it is a temporal-dead-zone error waiting for the
+  // first event that fires early.
+  const FX_LAYER = document.getElementById('fxLayer');
+  function refreshFx() {
+    FX_LAYER.classList.toggle('paused', document.hidden || downloading);
+  }
+  document.addEventListener('visibilitychange', refreshFx);
+
   let taskId = null, pollTimer = null, lastError = null, selectedQuality = 'Best';
   let selectedFormat = 'mp4';
   let selectedModel = null, selectedLang = 'auto', transcribeAvailable = false;
@@ -1739,6 +1778,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function setDownloading(busy) {
     downloading = busy;
+    refreshFx();
     const ready = sourceMode === 'file' ? !!localFile : !!videoInfo;
     setFmtEnabled(!busy && ready);
     DOWNLOAD_BTN.disabled = busy || !ready;
