@@ -128,6 +128,7 @@ TXT_BLOCK = """
   $('qualityRow').classList.add('hidden');
   $('modelRow').classList.remove('hidden');
   $('langRow').classList.remove('hidden');
+  $('tsRow').classList.remove('hidden');
   $('downloadBtn').textContent = 'Transcribe';
   $('transcriptHint').textContent = 'First run downloads the best model (~1620 MB), once.';
   $('statusText').textContent = 'Transcribing part 2/4...';

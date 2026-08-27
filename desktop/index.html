@@ -577,6 +577,11 @@
     <div class="opt-row hidden" id="langRow">
       <span class="opt-label">Language</span>
       <div class="chip-set" id="langChips" role="radiogroup" aria-label="Language"></div>
+    </div>
+
+    <div class="opt-row hidden" id="tsRow">
+      <span class="opt-label">Timestamps</span>
+      <div class="chip-set" id="tsChips" role="radiogroup" aria-label="Timestamps"></div>
       <div class="opt-note" id="transcriptHint"></div>
     </div>
   </div>
@@ -669,6 +674,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const LANG_ROW     = $('langRow');
   const MODEL_CHIPS  = $('modelChips');
   const LANG_CHIPS   = $('langChips');
+  const TS_ROW       = $('tsRow');
+  const TS_CHIPS     = $('tsChips');
   const TRANSCRIPT_HINT = $('transcriptHint');
   const ACTIONS_ROW  = $('actionsRow');
   const DOWNLOAD_BTN = $('downloadBtn');
@@ -849,6 +856,7 @@ document.addEventListener('DOMContentLoaded', () => {
     QUALITY_ROW.querySelector('.opt-label').textContent = isFile ? 'Resolution' : 'Quality';
     MODEL_ROW.classList.toggle('hidden', !isTxt);
     LANG_ROW.classList.toggle('hidden', !isTxt);
+    TS_ROW.classList.toggle('hidden', !isTxt);
     DOWNLOAD_BTN.textContent = isTxt ? 'Transcribe' : (isFile ? 'Convert' : 'Download');
     if (isTxt) updateTranscriptHint();
   }
@@ -939,6 +947,13 @@ document.addEventListener('DOMContentLoaded', () => {
         LANGS.forEach(([code, name]) => {
           LANG_CHIPS.appendChild(chip(name, code === selectedLang, () => {
             selectedLang = code; saveConfig({lang: code});
+          }));
+        });
+        selectedTs = TS_OPTIONS.some(([v]) => v === d.ts_interval) ? d.ts_interval : 0;
+        TS_CHIPS.innerHTML = '';
+        TS_OPTIONS.forEach(([value, name]) => {
+          TS_CHIPS.appendChild(chip(name, value === selectedTs, () => {
+            selectedTs = value; saveConfig({ts_interval: value});
           }));
         });
         updateTranscriptHint();

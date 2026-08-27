@@ -246,12 +246,71 @@ def _fmt_ts(ms):
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
-def write_outputs(cues, out_prefix):
-    """Write <prefix>.txt and <prefix>.srt. Returns the paths written."""
+# Offered in the UI as "off / every minute / every 2 / every 5". The .srt always
+# carries a stamp per cue -- that is what a subtitle file is -- so this only
+# shapes the .txt, where a stamp on every line is unreadable and none at all
+# leaves a long transcript with no way back into the video.
+TS_INTERVALS = (0, 60, 120, 300)
+
+
+def _fmt_stamp(ms):
+    """[HH:MM:SS], the form people paste back into a player."""
+    total = max(0, int(ms)) // 1000
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"[{h:02d}:{m:02d}:{s:02d}]"
+
+
+def stamped_text(cues, interval_s):
+    """The transcript as paragraphs, one per interval, each under its stamp.
+
+    Cues are joined into a paragraph rather than left one per line: a cue is a
+    couple of seconds of speech, so line-per-cue plus a stamp every minute reads
+    as a subtitle file with headings rather than as a transcript.
+
+    The stamp is the interval boundary, not the first cue's own start, so marks
+    land on round numbers (00:01:00, 00:02:00) and stay comparable with a
+    player's clock even when a paragraph happens to begin mid-sentence.
+    """
+    step = max(1, int(interval_s)) * 1000
+    blocks, para, bucket = [], [], None
+    for c in cues:
+        b = int(c["start"]) // step
+        if b != bucket:
+            if para:
+                blocks.append(" ".join(para))
+                para = []
+            blocks.append(_fmt_stamp(b * step))
+            bucket = b
+        text = c["text"].strip()
+        if text:
+            para.append(text)
+    if para:
+        blocks.append(" ".join(para))
+
+    out = []
+    for i, block in enumerate(blocks):
+        # A blank line before every stamp but the first, so the marks read as
+        # section breaks instead of as part of the paragraph above them.
+        if block.startswith("[") and i:
+            out.append("")
+        out.append(block)
+    return "\n".join(out) + "\n"
+
+
+def write_outputs(cues, out_prefix, ts_interval=0):
+    """Write <prefix>.txt and <prefix>.srt. Returns the paths written.
+
+    ts_interval is the gap in seconds between timestamps in the .txt. 0 keeps
+    the plain line-per-cue transcript, which is all this ever produced.
+    """
     txt_path = out_prefix + ".txt"
     with open(txt_path, "w", encoding="utf-8") as f:
-        for c in cues:
-            f.write(c["text"].strip() + "\n")
+        if ts_interval:
+            f.write(stamped_text(cues, ts_interval))
+        else:
+            for c in cues:
+                f.write(c["text"].strip() + "\n")
 
     srt_path = out_prefix + ".srt"
     with open(srt_path, "w", encoding="utf-8") as f:
@@ -453,7 +512,7 @@ class Transcriber:
     def transcribe(self, audio, model_path, out_prefix, lang="auto", prompt=None,
                    threads=None, progress_cb=None, status_cb=None,
                    chunk_sec=CHUNK_SEC, overlap_s=OVERLAP_SEC, use_gpu=False,
-                   gpu_index=0):
+                   gpu_index=0, ts_interval=0):
         """Transcribe `audio` to <out_prefix>.txt/.srt. Returns the paths written."""
         threads = threads or default_threads()
         log = status_cb or (lambda _m: None)
@@ -514,7 +573,7 @@ class Transcriber:
                 text, n = loops[0]
                 log(f"Note: {n} repeated lines detected (\"{text[:40]}...\")")
 
-            return write_outputs(cues, out_prefix)
+            return write_outputs(cues, out_prefix, ts_interval)
         finally:
             for name in os.listdir(work_dir) if os.path.isdir(work_dir) else []:
                 try:

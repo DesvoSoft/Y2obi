@@ -413,6 +413,7 @@ def transcribe_models():
         "models": [_model_entry(n, partials) for n in transcriber.MODELS],
         "default": _config().get("model") or transcriber.DEFAULT_MODEL,
         "lang": _config().get("lang") or "auto",
+        "ts_interval": _ts_interval(),
         "dir": MODELS_DIR,
         "downloading": running,
         # Asked of whisper itself, not guessed from the hardware — see
@@ -553,15 +554,30 @@ def _gpu_index():
     return idx if any(d["index"] == idx for d in devices) else 0
 
 
+def _ts_interval():
+    """Seconds between timestamps in the .txt, or 0 for none.
+
+    A value saved by a build that offered a different set degrades to 0 rather
+    than failing the transcription that is about to be written.
+    """
+    try:
+        value = int(_config().get("ts_interval", 0))
+    except (TypeError, ValueError):
+        return 0
+    return value if value in transcriber.TS_INTERVALS else 0
+
+
 @app.route("/api/config", methods=["GET"])
 def get_config():
     cfg = _config()
     return jsonify({
         "model": cfg.get("model") or transcriber.DEFAULT_MODEL,
         "lang": cfg.get("lang") or "auto",
+        "ts_interval": _ts_interval(),
         "device": _device(),
         "gpu_index": _gpu_index(),
         "onboarded": bool(cfg.get("onboarded")),
+        "log_dir": diagnostics.log_dir(),
     })
 
 
@@ -580,6 +596,17 @@ def set_config():
         if lang != "auto" and not re.fullmatch(r"[a-z]{2}", lang):
             return jsonify({"ok": False, "reason": f"Unknown language: {lang}"}), 400
         cfg["lang"] = lang
+    if "ts_interval" in data:
+        # A closed set rather than any number: the transcript is written once and
+        # kept, so a typo here would quietly produce a file stamped every second.
+        try:
+            ts = int(data["ts_interval"])
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "reason": "ts_interval must be a number"}), 400
+        if ts not in transcriber.TS_INTERVALS:
+            return jsonify({"ok": False,
+                            "reason": f"Unsupported timestamp interval: {ts}"}), 400
+        cfg["ts_interval"] = ts
     if "device" in data:
         device = str(data["device"]).strip().lower()
         if device not in ("cpu", "gpu"):
@@ -635,7 +662,7 @@ def _set(task_id, **kw):
             t.update(kw)
 
 
-def _run_transcribe(task_id, src, model, lang, is_file=False):
+def _run_transcribe(task_id, src, model, lang, is_file=False, ts_interval=0):
     """Run whisper over `src` and write .txt + .srt to DOWNLOAD_DIR.
 
     `src` is a YouTube URL, or a local path when `is_file` — a local file needs
@@ -709,6 +736,7 @@ def _run_transcribe(task_id, src, model, lang, is_file=False):
         _set(task_id, status="Transcribing...")
         want_gpu = _device() == "gpu"
         kw = dict(lang=lang or "auto", progress_cb=on_text_pct,
+                  ts_interval=ts_interval,
                   status_cb=lambda m: _set(task_id, status=m))
         try:
             files = tr.transcribe(audio_path, model_path, out_prefix,
@@ -848,7 +876,7 @@ def start_download():
             target=_run_transcribe,
             args=(task_id, path if is_file else url,
                   data.get("model") or transcriber.DEFAULT_MODEL,
-                  data.get("lang") or "auto", is_file),
+                  data.get("lang") or "auto", is_file, _ts_interval()),
             daemon=True,
         ).start()
         return jsonify({"task_id": task_id})

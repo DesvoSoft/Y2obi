@@ -2,6 +2,7 @@
 
 Run: python -m unittest discover tests
 """
+import json
 import os
 import shutil
 import sys
@@ -280,6 +281,32 @@ class ModelRoutes(unittest.TestCase):
     def test_config_accepts_auto_and_iso_codes(self):
         for good in ("auto", "es", "EN", " ja "):
             self.assertTrue(self.c.post("/api/config", json={"lang": good}).get_json()["ok"], good)
+
+    def test_config_accepts_the_offered_timestamp_intervals(self):
+        for value in transcriber.TS_INTERVALS:
+            r = self.c.post("/api/config", json={"ts_interval": value})
+            self.assertTrue(r.get_json()["ok"], value)
+            self.assertEqual(self.c.get("/api/config").get_json()["ts_interval"], value)
+
+    def test_config_rejects_an_interval_nobody_offered(self):
+        # The transcript is written once and kept, so a value that slipped
+        # through would quietly produce a file stamped every second.
+        for bad in (7, -60, "minute", None):
+            self.assertEqual(
+                self.c.post("/api/config", json={"ts_interval": bad}).status_code, 400, bad)
+
+    def test_stale_interval_degrades_to_off(self):
+        """A value saved by a build that offered a different set must not fail
+        the transcription that is about to be written."""
+        with open(srv.CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump({"ts_interval": 45}, f)
+        self.assertEqual(self.c.get("/api/config").get_json()["ts_interval"], 0)
+
+    def test_models_route_carries_the_interval(self):
+        # The page builds the chips from this response, not from /api/config.
+        self.c.post("/api/config", json={"ts_interval": 120})
+        self.assertEqual(
+            self.c.get("/api/transcribe/models").get_json()["ts_interval"], 120)
 
     def test_corrupt_config_falls_back_to_defaults(self):
         # A hand-edited or half-written file must never stop the app.

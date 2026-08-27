@@ -187,6 +187,52 @@ class WriteOutputs(unittest.TestCase):
             self.assertEqual(f.read().split("\n")[:2], ["one", "two"])
         self.assertEqual(tr._parse_srt(srt), cues)
 
+    def test_no_timestamps_by_default(self):
+        """The stamped path must be opt-in: 0 keeps what every build wrote."""
+        cues = [{"start": 0, "end": 1500, "text": "one"},
+                {"start": 61000, "end": 62000, "text": "two"}]
+        txt, _ = tr.write_outputs(cues, os.path.join(self.dir, "out"))
+        with open(txt, encoding="utf-8") as f:
+            self.assertNotIn("[", f.read())
+
+    def test_timestamps_mark_interval_boundaries(self):
+        cues = [{"start": 0, "end": 1500, "text": "one"},
+                {"start": 3000, "end": 4000, "text": "still the first minute"},
+                {"start": 61000, "end": 62000, "text": "two"},
+                {"start": 125000, "end": 126000, "text": "three"}]
+        txt, srt = tr.write_outputs(cues, os.path.join(self.dir, "out"), 60)
+        with open(txt, encoding="utf-8") as f:
+            lines = [ln for ln in f.read().split(chr(10)) if ln]
+        self.assertEqual(lines, [
+            "[00:00:00]", "one still the first minute",
+            "[00:01:00]", "two",
+            "[00:02:00]", "three",
+        ])
+        # The subtitle file is what it always was; only the transcript changed.
+        self.assertEqual(tr._parse_srt(srt), cues)
+
+    def test_stamps_land_on_the_boundary_not_the_cue(self):
+        """A paragraph starting at 2:41 belongs to the 2-minute mark.
+
+        Stamping the cue's own start would give 00:02:41, which no longer lines
+        up with anything the reader can scrub to.
+        """
+        cues = [{"start": 161000, "end": 162000, "text": "late"}]
+        out = tr.stamped_text(cues, 120)
+        self.assertTrue(out.startswith("[00:02:00]"), out)
+
+    def test_empty_buckets_produce_no_stamp(self):
+        """Silence is not a section: only intervals with speech get a mark."""
+        cues = [{"start": 0, "end": 1000, "text": "start"},
+                {"start": 600000, "end": 601000, "text": "much later"}]
+        stamps = [ln for ln in tr.stamped_text(cues, 60).split(chr(10))
+                  if ln.startswith("[")]
+        self.assertEqual(stamps, ["[00:00:00]", "[00:10:00]"])
+
+    def test_offered_intervals_include_off(self):
+        self.assertEqual(tr.TS_INTERVALS[0], 0)
+        self.assertTrue(all(isinstance(v, int) for v in tr.TS_INTERVALS))
+
 
 class ModelCatalogue(unittest.TestCase):
     def test_ui_models_exist_and_are_labelled(self):
