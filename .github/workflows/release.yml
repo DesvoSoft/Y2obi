@@ -22,9 +22,30 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Compile PyInstaller's bootloader instead of taking the prebuilt wheel.
+      # Every PyInstaller app on earth ships byte-identical bootloader code, so
+      # those bytes sit in the generic-signature databases of most AV engines and
+      # drag unsigned onefile builds down with them: the exe gets flagged for
+      # what it was packed with, not for anything it does. Building it here gives
+      # this release its own bootloader. windows-latest already has MSVC, so the
+      # only cost is a couple of minutes of build time.
+      #
+      # Falling back to the wheel here would leave the stock bootloader in place
+      # and make the whole exercise silently pointless, so the install output is
+      # checked for the line that only a source build prints.
+      - name: Install PyInstaller with a self-compiled bootloader
+        shell: pwsh
         run: |
-          pip install -r requirements.txt
-          pip install pyinstaller
+          pip install --no-binary pyinstaller "pyinstaller==6.20.0" 2>&1 | Tee-Object -Variable out
+          if (-not ($out -match 'Building wheel for pyinstaller')) {
+            throw "pip used a prebuilt wheel: the bootloader is the stock one again"
+          }
+          $root = python -c "import PyInstaller,os;print(os.path.dirname(PyInstaller.__file__))"
+          $boot = Join-Path $root 'bootloader/Windows-64bit-intel/run.exe'
+          if (-not (Test-Path $boot)) { throw "bootloader not found at $boot" }
+          Write-Host "bootloader sha256 $((Get-FileHash $boot -Algorithm SHA256).Hash.ToLower())"
 
       - name: Run tests
         run: python -m unittest discover tests
@@ -104,6 +125,32 @@ jobs:
       - name: Build exe
         run: pyinstaller build.spec
 
+      # v1.4.0 downloads clean and v1.4.1 does not, from source that differs by
+      # one bugfix and a release-note edit -- and there was no way to tell what
+      # else moved between them, because nothing recorded it. ffmpeg comes from a
+      # "latest release" URL and the Python deps float within their ranges, so
+      # two builds a day apart can legitimately differ. This makes each release
+      # say what it was made of, so the next comparison is a diff and not a
+      # guess.
+      - name: Record what this build was made of
+        shell: pwsh
+        run: |
+          $lines = @("Y2obi build inputs", "built  $((Get-Date).ToUniversalTime().ToString('u'))",
+                     "commit $env:GITHUB_SHA", "runner $env:RUNNER_OS", "")
+          $lines += "python  $(python --version)"
+          $lines += "pyinstaller $(pyinstaller --version)"
+          $lines += (pip freeze | Where-Object { $_ -match '^(yt-dlp|flask|pywebview|werkzeug)=' })
+          $lines += ""
+          $ff = & core/ffmpeg.exe -version 2>&1 | Select-Object -First 1
+          $lines += "ffmpeg  $ff"
+          $lines += "ffmpeg  sha256 $((Get-FileHash core/ffmpeg.exe -Algorithm SHA256).Hash.ToLower())"
+          $lines += ""
+          Get-ChildItem core/whisper -Filter *.dll | ForEach-Object {
+            $lines += "whisper $($_.Name)  $((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())"
+          }
+          $lines | Out-File -FilePath build-info.txt -Encoding utf8
+          Get-Content build-info.txt
+
       - name: Zip release artifact
         shell: pwsh
         run: Compress-Archive -Path dist/Y2obi.exe -DestinationPath Y2obi-win.zip
@@ -124,6 +171,7 @@ jobs:
           path: |
             Y2obi-win.zip
             checksum.txt
+            build-info.txt
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
@@ -132,6 +180,7 @@ jobs:
           files: |
             Y2obi-win.zip
             checksum.txt
+            build-info.txt
           generate_release_notes: true
           body: |
             > **Windows blocked the download or shows a SmartScreen warning?**
