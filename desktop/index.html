@@ -953,8 +953,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // whisper takes any ISO code straight through, so offering more here costs
   // nothing on the backend.
-  const LANGS = [['auto','Auto'], ['en','English'], ['es','Espanol'], ['pt','Portugues'],
-                 ['fr','Francais'], ['de','Deutsch'], ['it','Italiano'], ['ja','Japanese']];
+  const LANGS = [['auto','Auto'], ['en','English'], ['es','Español'], ['pt','Português'],
+                 ['fr','Français'], ['de','Deutsch'], ['it','Italiano'], ['ja','日本語']];
+
+  // Seconds between timestamps in the .txt. The .srt is a subtitle file and
+  // always carries one per cue, so this only shapes the transcript, where a
+  // stamp on every line is noise and none at all leaves no way back into the
+  // video. Must stay in step with transcriber.TS_INTERVALS, which rejects
+  // anything else rather than writing a file nobody asked for.
+  const TS_OPTIONS = [[0, 'None'], [60, 'Every minute'], [120, 'Every 2 min'],
+                      [300, 'Every 5 min']];
+  let selectedTs = 0;
 
   function saveConfig(patch) {
     api('/api/config', {
