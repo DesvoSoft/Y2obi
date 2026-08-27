@@ -170,9 +170,21 @@ server.app.view_functions["analyze"] = analyze_or_fake
 @server.app.route("/shot/<theme>")
 @server.app.route("/shot/<theme>/<state>")
 def shot(theme, state="empty"):
+    """`theme` is a mode, optionally with an accent: dark, light, light-purple.
+
+    Appearance is two attributes now (see "Appearance" in index.html), so a shot
+    URL that only rewrote data-theme would silently screenshot every accent as
+    the default one and prove nothing about the other two.
+    """
+    mode, _, accent = theme.partition("-")
+    accent = accent or "green"
     page = open(os.path.join(server._static_dir, "index.html"), encoding="utf-8").read()
-    html = page.replace('data-theme="dark"', f'data-theme="{theme}"', 1)
-    html = html.replace("defaultTheme: 'dark'", f"defaultTheme: '{theme}'")
+    html = page.replace('data-theme="dark" data-accent="green"',
+                        f'data-theme="{mode}" data-accent="{accent}"', 1)
+    html = html.replace("defaultTheme: 'dark'", f"defaultTheme: '{mode}'")
+    # initAppearance would put the stored accent back over the one asked for.
+    html = html.replace("(function initAppearance() {",
+                        "(function initAppearance() { if (1) return;")
     html = html.replace("<body>", "<body>" + STUB, 1)
     if state != "empty":
         html = html.replace("</body>", FAKE.replace("S_TATE", state).replace(

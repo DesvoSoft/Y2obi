@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="dark" data-accent="green">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -37,15 +37,43 @@
     --ok-fg:  #2ced8c; --ok-bg:  rgba(16,183,99,.16);  --ok-bd:  rgba(16,183,99,.35);
     --bad-fg: #f37272; --bad-bg: rgba(239,67,67,.14);  --bad-bd: rgba(239,67,67,.32);
     --fx-op: .55;
+    /* Two companions for the accent in the particle field, a step around the
+       wheel each way, so the drift stays part of the same palette. */
+    --fx-2: hsl(calc(var(--vitra-color-accent-h) + 40) var(--vitra-color-accent-s) var(--vitra-color-accent-l));
+    --fx-3: hsl(calc(var(--vitra-color-accent-h) - 40) var(--vitra-color-accent-s) var(--vitra-color-accent-l));
   }
+  /* Accent families.
+
+     Vitra derives nearly everything from the accent hue -- including the dark
+     background, which is hsl(accent-h 15% 4%) -- so a look here is three numbers,
+     not a palette. Two families and a neutral, each usable light or dark: six
+     appearances out of four controls, where the picker used to list six
+     unrelated themes and most of them existed only because Vitra shipped them.
+     [data-theme] still carries light/dark, so Vitra's own tokens keep working. */
+  [data-accent="green"]  { --vitra-color-accent-h: 158; --vitra-color-accent-s: 72%; --vitra-color-accent-l: 52%; }
+  [data-accent="purple"] { --vitra-color-accent-h: 272; --vitra-color-accent-s: 66%; --vitra-color-accent-l: 66%; }
+  /* Neutral is not a hue, it is the absence of one: the same machinery with the
+     saturation turned off, which lands on black and white. */
+  [data-accent="neutral"] { --vitra-color-accent-h: 220; --vitra-color-accent-s: 8%; --vitra-color-accent-l: 74%; }
+
   /* Light themes: white-on-accent drops to ~3:1, so accent fills take dark
      ink, and the status colours need real contrast against a white sheet. */
   [data-theme="pastel"], [data-theme="light"] {
     --panel-sh:  0 20px 50px rgba(60,30,60,.16);
-    --on-accent: hsl(var(--vitra-color-accent-h) 85% 10%);
+    /* The saturation comes from the accent rather than a fixed 85% so the
+       neutral family stays neutral instead of tinting its own ink. */
+    --on-accent: hsl(var(--vitra-color-accent-h) var(--vitra-color-accent-s) 10%);
     --ok-fg:  #0a7040; --ok-bg:  rgba(16,183,99,.14); --ok-bd:  rgba(16,183,99,.4);
     --bad-fg: #b02020; --bad-bg: rgba(239,67,67,.1);  --bad-bd: rgba(239,67,67,.3);
     --fx-op: .3;
+  }
+
+  /* Neutral + light is the black-on-white end of the picker: a pale grey fill
+     would leave no contrast for either ink, so the fill goes near-black and the
+     ink goes white -- the only place --on-accent is overridden outright. */
+  [data-theme="light"][data-accent="neutral"] {
+    --vitra-color-accent-l: 24%;
+    --on-accent: #fff;
   }
 
   *, *::before, *::after { box-sizing: border-box; }
@@ -126,9 +154,20 @@
   .logo-group { display: flex; align-items: center; gap: 12px; }
   .logo-icon {
     width: 42px; height: 42px; border-radius: 12px;
-    background: linear-gradient(135deg, var(--vitra-color-accent), #7c4dff);
+    background: linear-gradient(135deg, var(--vitra-color-accent), var(--fx-2));
     display: flex; align-items: center; justify-content: center;
     color: var(--on-accent); flex-shrink: 0;
+  }
+  /* Vitra's gradient text pins its saturation at 85%, so the neutral family's
+     near-grey hue came out a saturated blue -- the one place the accent tokens
+     were not enough. Re-derived from the accent's own saturation and lightness;
+     the attribute selectors are there only to outweigh Vitra's own rule. */
+  [data-theme][data-accent] .vitra-gradient-text {
+    background-image: linear-gradient(135deg,
+      var(--vitra-color-accent),
+      hsl(calc(var(--vitra-color-accent-h) + 40) var(--vitra-color-accent-s) calc(var(--vitra-color-accent-l) - 5%)),
+      hsl(calc(var(--vitra-color-accent-h) - 20) var(--vitra-color-accent-s) var(--vitra-color-accent-l)),
+      var(--vitra-color-accent));
   }
   .logo-text { font-size: 23px; font-weight: 800; margin: 0; line-height: 1.15; }
   .logo-sub  { font-size: 12px; color: var(--faint); margin: 0; }
@@ -143,12 +182,16 @@
   }
   .theme-chip:hover { transform: scale(1.18); }
   .theme-chip.active { border-color: var(--vitra-color-text-primary); }
-  .theme-chip[data-theme="dark"]    { background: #1a1a2e; }
-  .theme-chip[data-theme="neon"]    { background: #00ffff; }
-  .theme-chip[data-theme="ocean"]   { background: #0088ff; }
-  .theme-chip[data-theme="emerald"] { background: #00cc88; }
-  .theme-chip[data-theme="pastel"]  { background: #ffb6c1; }
-  .theme-chip[data-theme="light"]   { background: #f2f5f6; }
+  .theme-chip[data-accent="green"]   { background: hsl(158 72% 52%); }
+  .theme-chip[data-accent="purple"]  { background: hsl(272 66% 66%); }
+  /* Half black, half white: the neutral swatch has to show both halves of what
+     it does, and a single grey circle would read as "disabled". */
+  .theme-chip[data-accent="neutral"] { background: linear-gradient(135deg, #f2f5f6 0 50%, #16181c 50% 100%); }
+  .theme-picker + .theme-picker { margin-top: 9px; }
+  .theme-chip[data-theme="dark"]  { background: #16181c; }
+  .theme-chip[data-theme="light"] { background: #f2f5f6; }
+  .appearance-row { display: flex; align-items: center; gap: 12px; }
+  .appearance-row .oc-sub { min-width: 54px; }
 
   .icon-btn {
     width: 34px; height: 34px; border-radius: 10px; padding: 0; cursor: pointer;
@@ -728,6 +771,32 @@ document.addEventListener('DOMContentLoaded', () => {
   const COOKIE_LINK  = $('cookieLink');
   const COOKIE_INPUT = $('cookieInput');
 
+  /* ---- appearance -------------------------------------------------------
+     Vitra owns [data-theme] (light or dark) and persists it itself; the accent
+     family is ours and rides alongside in [data-accent]. Vitra.theme.set
+     validates against its own whitelist, so a custom id there would be refused
+     -- splitting the two is what lets us define families without forking it. */
+  const ACCENTS = ['green', 'purple', 'neutral'];
+  const ACCENT_KEY = 'y2obi-accent';
+  const currentAccent = () => document.documentElement.getAttribute('data-accent') || 'green';
+  function setAccent(id) {
+    if (!ACCENTS.includes(id)) return;
+    document.documentElement.setAttribute('data-accent', id);
+    try { localStorage.setItem(ACCENT_KEY, id); } catch (e) {}
+  }
+  (function initAppearance() {
+    let saved = null;
+    try { saved = localStorage.getItem(ACCENT_KEY); } catch (e) {}
+    setAccent(ACCENTS.includes(saved) ? saved : 'green');
+    // Anyone upgrading carries a theme this build no longer offers. Vitra would
+    // happily keep painting it, leaving the mode dots pointing at the wrong one,
+    // so fold the old six onto the two that survive.
+    const MODE = {neon: 'dark', ocean: 'dark', emerald: 'dark', pastel: 'light'};
+    let stored = null;
+    try { stored = localStorage.getItem('vitra-theme'); } catch (e) {}
+    if (stored && MODE[stored] && window.Vitra) Vitra.theme.set(MODE[stored]);
+  })();
+
   const SOURCE_TABS  = $('sourceTabs');
   const SRC_FILE_TAB = $('srcFileTab');
   const URL_ROW      = $('urlRow');
@@ -1178,7 +1247,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         <div class="set-section">
           <h4>Appearance</h4>
-          <div class="theme-picker" id="setThemes"></div>
+          <div class="appearance-row">
+            <span class="oc-sub">Colour</span>
+            <div class="theme-picker" id="setAccents"></div>
+          </div>
+          <div class="appearance-row" style="margin-top:9px">
+            <span class="oc-sub">Mode</span>
+            <div class="theme-picker" id="setThemes"></div>
+          </div>
         </div>
 
         <div class="set-section">
@@ -1245,25 +1321,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
       panel.querySelector('#settingsClose').addEventListener('click', close);
 
-      // Appearance — the same dots that used to crowd the header.
-      const themes = [['dark','Dark'],['neon','Neon'],['ocean','Ocean'],
-                      ['emerald','Emerald'],['pastel','Pastel'],['light','Light']];
-      const applied = document.documentElement.getAttribute('data-theme');
-      const themeHost = panel.querySelector('#setThemes');
-      themes.forEach(([id, label]) => {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'theme-chip' + (id === applied ? ' active' : '');
-        b.dataset.theme = id;
-        b.title = label;
-        b.setAttribute('aria-label', label + ' theme');
-        b.onclick = () => {
-          themeHost.querySelectorAll('.theme-chip').forEach(x => x.classList.remove('active'));
-          b.classList.add('active');
-          Vitra.theme.set(id);
-        };
-        themeHost.appendChild(b);
+      // The log is the first thing to ask for when something goes wrong on a
+      // machine that is not this one, so it takes one click to reach rather
+      // than a path someone has to be talked through over chat.
+      panel.querySelector('#setOpenLogs').addEventListener('click', () => {
+        api('/api/open_logs', {method: 'POST'}).catch(() => {});
       });
+
+      // Appearance. Two axes instead of one list: a colour family and a
+      // light/dark mode, which is the same six looks with two decisions the
+      // user can actually reason about.
+      function dots(host, key, items, applied, apply) {
+        items.forEach(([id, label]) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'theme-chip' + (id === applied ? ' active' : '');
+          b.dataset[key] = id;
+          b.title = label;
+          b.setAttribute('aria-label', label);
+          b.onclick = () => {
+            host.querySelectorAll('.theme-chip').forEach(x => x.classList.remove('active'));
+            b.classList.add('active');
+            apply(id);
+          };
+          host.appendChild(b);
+        });
+      }
+
+      dots(panel.querySelector('#setAccents'), 'accent',
+           [['green', 'Green'], ['purple', 'Purple'], ['neutral', 'Black and white']],
+           currentAccent(), setAccent);
+      dots(panel.querySelector('#setThemes'), 'theme',
+           [['dark', 'Dark'], ['light', 'Light']],
+           document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark',
+           id => Vitra.theme.set(id));
 
       // Transcription
       if (!transcribeAvailable) {
