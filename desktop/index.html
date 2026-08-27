@@ -318,6 +318,12 @@
   .progress-stats { display: flex; margin-top: 6px; font-size: 12.5px; align-items: center; gap: 10px; }
   .progress-stats .status { flex: 1; color: var(--vitra-color-text-secondary); }
   .progress-stats .speed-eta { color: var(--faint); font-size: 12px; white-space: nowrap; }
+  /* A full bar whose stripes keep marching reads as "still working". The
+     striped/animated classes are added by JS while a job runs and taken off the
+     moment it finishes, and the finished bar goes solid green so 100% and done
+     are the same picture. */
+  .progress-card.done .vitra-progress-bar { background: var(--ok-fg); }
+  .progress-card.done .vitra-progress-value { color: var(--ok-fg); }
   .result-row { display: none; gap: 8px; margin-top: 12px; }
   .result-row.visible { display: flex; }
   .res-btn {
@@ -611,7 +617,7 @@
   <div id="progressCard" class="panel progress-card">
     <div class="vitra-progress-container">
       <div class="vitra-progress vitra-progress-lg">
-        <div class="vitra-progress-bar vitra-progress-bar-striped vitra-progress-bar-animated" id="barFill" style="width:0%"></div>
+        <div class="vitra-progress-bar" id="barFill" style="width:0%"></div>
       </div>
       <span class="vitra-progress-value" id="pctText"></span>
     </div>
@@ -1798,7 +1804,35 @@ document.addEventListener('DOMContentLoaded', () => {
     QUALITY_CHIPS.classList.toggle('locked', busy);
     MODEL_CHIPS.classList.toggle('locked', busy);
     LANG_CHIPS.classList.toggle('locked', busy);
+    TS_CHIPS.classList.toggle('locked', busy);
   }
+
+  // The bar has three states and only one place that sets them. Running is the
+  // only one that animates: a striped bar still marching at 100% was the single
+  // most common "is it stuck?" question about this app.
+  const BAR_ANIM = ['vitra-progress-bar-striped', 'vitra-progress-bar-animated'];
+  function barRunning() {
+    PROGRESS_CARD.classList.remove('done');
+    BAR_FILL.classList.add(...BAR_ANIM);
+  }
+  function barDone() {
+    BAR_FILL.classList.remove(...BAR_ANIM);
+    BAR_FILL.style.width = '100%';
+    PCT_TEXT.textContent = '100%';
+    PROGRESS_CARD.classList.add('done');
+  }
+  function barReset() {
+    BAR_FILL.classList.remove(...BAR_ANIM);
+    PROGRESS_CARD.classList.remove('done');
+    BAR_FILL.style.width = '0%';
+    PCT_TEXT.textContent = '';
+    SPEED_TEXT.textContent = '';
+  }
+  // Everything here is closed over by the DOMContentLoaded handler, so
+  // tools/devserver.py cannot reach it. It drives the real functions through
+  // this rather than re-creating the class juggling, which is the only way a
+  // screenshot of a finished bar says anything about the app.
+  window._y2obiBar = {running: barRunning, done: barDone, reset: barReset};
 
   // A download reports bytes/s; a conversion reports ffmpeg's realtime factor
   // ("12.3x"), which is the number that actually means something there.
@@ -1875,6 +1909,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (isFile ? !localFile : (!videoInfo || !currentUrl)) return;
     hideError();
     PROGRESS_CARD.classList.add('visible');
+    barReset();
+    barRunning();
     RESULT_ROW.classList.remove('visible');
     setDownloading(true);
     updateProgress(0, 0, 0, 'Starting...');
@@ -1912,9 +1948,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (data.done) {
         if (data.cancelled) {
           setDownloading(false); STATUS_TEXT.textContent = 'Cancelled';
-          PROGRESS_CARD.classList.remove('visible'); BAR_FILL.style.width = '0%'; PCT_TEXT.textContent = ''; SPEED_TEXT.textContent = '';
+          PROGRESS_CARD.classList.remove('visible'); barReset();
         } else if (data.already_exists) {
           setDownloading(false);
+          barDone();
           STATUS_TEXT.textContent = 'Already downloaded — check ~/Downloads/Y2obi/';
           SPEED_TEXT.textContent = '';
           toast('File already exists in ~/Downloads/Y2obi/');
@@ -1925,6 +1962,7 @@ document.addEventListener('DOMContentLoaded', () => {
           else showError(data.error);
         } else {
           setDownloading(false);
+          barDone();
           const extras = data.extra_filenames || [];
           STATUS_TEXT.textContent = extras.length
             ? 'Saved .txt + .srt to ~/Downloads/Y2obi/'

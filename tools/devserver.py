@@ -105,12 +105,14 @@ window.addEventListener('load', () => setTimeout(() => {
   $('downloadBtn').disabled = false;
   $('progressCard').classList.add('visible');
   if (STATE === 'done') {
+    window._y2obiBar.done();
     $('barFill').style.width = '100%'; $('pctText').textContent = '100%';
     $('statusText').textContent = 'Saved to ~/Downloads/Y2obi/';
     $('speedText').textContent = 'Done';
     $('resultRow').classList.add('visible');
   } else {
     $('actionsRow').classList.add('busy');
+    window._y2obiBar.running();
     $('barFill').style.width = '64%'; $('pctText').textContent = '64%';
     $('statusText').textContent = 'Downloading...';
     $('speedText').textContent = '4.2 MB/s  1m 12s';
