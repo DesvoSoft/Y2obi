@@ -24,6 +24,8 @@ from app import converter
 from app import transcriber
 from app.binaries import get_whisper_cli
 from app import diagnostics
+from app import updates
+from app.version import VERSION
 
 _lock = threading.Lock()
 tasks = {}
@@ -554,6 +556,18 @@ def _gpu_index():
     return idx if any(d["index"] == idx for d in devices) else 0
 
 
+def _save_config_key(key, value):
+    """Persist one key without disturbing the rest of the file."""
+    cfg = _config()
+    cfg[key] = value
+    try:
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except OSError:
+        pass
+
+
 def _ts_interval():
     """Seconds between timestamps in the .txt, or 0 for none.
 
@@ -578,6 +592,8 @@ def get_config():
         "gpu_index": _gpu_index(),
         "onboarded": bool(cfg.get("onboarded")),
         "log_dir": diagnostics.log_dir(),
+        "update_check": bool(cfg.get("update_check", True)),
+        "version": VERSION,
     })
 
 
@@ -620,6 +636,8 @@ def set_config():
             cfg["gpu_index"] = int(data["gpu_index"])
         except (TypeError, ValueError):
             return jsonify({"ok": False, "reason": "gpu_index must be a number"}), 400
+    if "update_check" in data:
+        cfg["update_check"] = bool(data["update_check"])
     if "onboarded" in data:
         cfg["onboarded"] = bool(data["onboarded"])
     try:
@@ -1001,6 +1019,18 @@ def _explorer_command(target):
     return f'explorer /select,"{norm}"'
 
 
+@app.route("/api/update")
+def update_status():
+    """What the background check found. Never triggers one itself.
+
+    The page polls this once on load; a route that could start a network call
+    would make the first paint wait on GitHub.
+    """
+    if not _config().get("update_check", True):
+        return jsonify({"checked": False, "available": False, "disabled": True})
+    return jsonify(updates.cached())
+
+
 @app.route("/api/open_logs", methods=["POST"])
 def open_logs():
     """Reveal the log folder. No path comes from the client."""
@@ -1072,6 +1102,15 @@ def start_server(ffmpeg_path, static_dir, port=0):
         transcriber.probe_backends(get_whisper_cli())
     except Exception:
         pass
+
+    # Off the request path and off the startup path: a daemon thread that the
+    # UI later asks for a cached answer. The app behaves the same offline.
+    cfg = _config()
+    if cfg.get("update_check", True):
+        updates.check_in_background(
+            current=VERSION,
+            last_checked=cfg.get("update_checked_at", 0),
+            save_cb=lambda ts: _save_config_key("update_checked_at", ts))
 
     import socket
     if port == 0:

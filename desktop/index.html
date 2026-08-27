@@ -390,6 +390,11 @@
   .footer-link:hover { color: var(--vitra-color-accent); }
   .footer-sep { opacity: .35; }
   .footer-link.ok { color: var(--ok-fg); }
+  /* The one thing in the footer that is asking to be clicked, so it is the one
+     thing there allowed to use the accent. */
+  .footer-link.update { color: var(--vitra-color-accent); font-weight: 600; }
+  .set-toggle { display: flex; align-items: flex-start; gap: 9px; cursor: pointer; }
+  .set-toggle input { margin: 3px 0 0; flex-shrink: 0; accent-color: var(--vitra-color-accent); }
   .btn-details {
     background: var(--field-bg); color: var(--vitra-color-text-secondary);
     border: 1px solid var(--card-bd); border-radius: 7px;
@@ -683,6 +688,10 @@
       <button type="button" class="footer-link" id="cookieLink">YouTube: not connected</button>
       <span class="footer-sep">|</span>
       <a class="footer-link" href="https://github.com/DesvoSoft" target="_blank">DesvoSoft</a>
+      <span class="update-group" id="updateGroup" hidden>
+        <span class="footer-sep">|</span>
+        <a class="footer-link update" id="updateLink" target="_blank"></a>
+      </span>
       <span class="details-group" id="detailsGroup" style="display:none">
         <span class="footer-sep">|</span>
         <button id="detailsBtn" class="btn-details">Details</button>
@@ -815,6 +824,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // beside the spawn so it is below `downloading` -- reading a `let` from a
   // function hoisted above it is a temporal-dead-zone error waiting for the
   // first event that fires early.
+  // The check itself runs on a daemon thread in the server; this only reads the
+  // answer it already has, so the first paint never waits on GitHub.
+  (function showUpdateIfAny() {
+    api('/api/update').then(r => r.json()).then(u => {
+      if (!u.available || !u.latest) return;
+      const link = document.getElementById('updateLink');
+      link.textContent = 'Version ' + u.latest + ' available';
+      link.href = u.url;
+      link.title = 'Open the release page';
+      document.getElementById('updateGroup').hidden = false;
+    }).catch(() => {});
+  })();
+
   const FX_LAYER = document.getElementById('fxLayer');
   function refreshFx() {
     FX_LAYER.classList.toggle('paused', document.hidden || downloading);
@@ -1281,6 +1303,17 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
 
         <div class="set-section">
+          <h4>Updates</h4>
+          <label class="set-toggle">
+            <input type="checkbox" id="setUpdateCheck">
+            <span>
+              <div class="model-title">Tell me when a new version is out</div>
+              <div class="model-meta" id="setUpdateMeta"></div>
+            </span>
+          </label>
+        </div>
+
+        <div class="set-section">
           <h4>Storage</h4>
           <div class="model-item">
             <div>
@@ -1397,6 +1430,24 @@ document.addEventListener('DOMContentLoaded', () => {
       api('/api/config').then(r => r.json()).then(c => {
         const el = panel.querySelector('#setLogMeta');
         if (el && c.log_dir) el.innerHTML = `<code>${escHtml(c.log_dir)}</code>`;
+
+        const box = panel.querySelector('#setUpdateCheck');
+        const meta = panel.querySelector('#setUpdateMeta');
+        if (!box) return;
+        box.checked = c.update_check !== false;
+        // Said plainly rather than buried: this app talks to nobody but YouTube,
+        // and one daily request to GitHub is a change worth naming.
+        const say = () => {
+          meta.textContent = 'You are on ' + (c.version || '?') + '. '
+            + (box.checked
+               ? 'Checks GitHub once a day. Nothing is downloaded or installed.'
+               : 'Turned off — Y2obi will not contact GitHub.');
+        };
+        say();
+        box.addEventListener('change', () => {
+          saveConfig({update_check: box.checked});
+          say();
+        });
       }).catch(() => {});
       const partialTotal = allModels.reduce((a, m) => a + (m.partial_mb || 0), 0);
       const usedTotal = allModels.reduce((a, m) => a + (m.installed ? m.disk_mb : 0), 0);

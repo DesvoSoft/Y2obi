@@ -55,7 +55,9 @@ def _install_webview2(progress_cb):
             pass
 
 
-VERSION = "1.4.1"
+# One definition, in app/version.py: the server needs it for the update check and
+# cannot import main without a cycle.
+from app.version import VERSION
 
 # How long Python may stop making progress before we consider the app wedged.
 # Nothing legitimate blocks this long: the slow work (yt-dlp, ffmpeg, whisper)
