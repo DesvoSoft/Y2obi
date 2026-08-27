@@ -525,6 +525,13 @@ class DataRootsAreSandboxed(unittest.TestCase):
             self.assertTrue(os.path.normcase(path).startswith(os.path.normcase(sandbox)),
                             f"{path} escapes the sandbox")
 
+    def test_the_log_dir_is_sandboxed_too(self):
+        from app import diagnostics
+        sandbox = os.path.join(tempfile.gettempdir(), "y2obi_tests")
+        self.assertTrue(
+            os.path.normcase(diagnostics.log_dir()).startswith(os.path.normcase(sandbox)),
+            f"{diagnostics.log_dir()} escapes the sandbox")
+
     def test_the_real_profile_is_not_referenced(self):
         real = os.path.join(os.environ.get("APPDATA", "!none"), "Y2obi")
         self.assertNotEqual(os.path.normcase(srv._APP_DATA), os.path.normcase(real))

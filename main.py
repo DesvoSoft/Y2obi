@@ -106,10 +106,10 @@ def _parse_args(argv=None):
         prog="Y2obi",
         description="YouTube downloader and offline transcriber.")
     ap.add_argument("--debug", action="store_true",
-                    help="write a log file and enable right-click Inspect in the window")
+                    help="enable right-click Inspect in the window (the log is "
+                         "always written, with or without this)")
     ap.add_argument("--log", metavar="FILE",
-                    help="write the log here (implies --debug logging, default "
-                         "%%TEMP%%" + os.sep + "y2obi-debug.log)")
+                    help="write the log here instead of the default location")
     ap.add_argument("--reset", action="store_true",
                     help="delete settings before starting, so the first-run screen shows again")
     ap.add_argument("--cpu", action="store_true",
@@ -118,50 +118,6 @@ def _parse_args(argv=None):
                     help="open a YouTube sign-in window (used internally by the app)")
     ap.add_argument("--version", action="version", version=f"Y2obi {VERSION}")
     return ap.parse_args(argv)
-
-
-class _Tee:
-    """Write to the log file and to the original stream, if there is one.
-
-    The released exe is built windowed, so sys.stdout is None and anything the
-    app prints is lost. That is fine until something misbehaves on a machine
-    that is not this one, which is exactly when the output matters.
-    """
-
-    def __init__(self, stream, handle):
-        self._stream = stream
-        self._handle = handle
-
-    def write(self, text):
-        try:
-            self._handle.write(text)
-            self._handle.flush()
-        except (OSError, ValueError):
-            pass
-        if self._stream:
-            try:
-                self._stream.write(text)
-            except (OSError, ValueError):
-                pass
-
-    def flush(self):
-        for target in (self._handle, self._stream):
-            try:
-                if target:
-                    target.flush()
-            except (OSError, ValueError):
-                pass
-
-
-def _start_logging(path):
-    handle = open(path, "a", encoding="utf-8", errors="replace")
-    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    handle.write(chr(10) + "===== Y2obi " + VERSION + " started " + stamp + " =====" + chr(10))
-    handle.write("frozen=" + str(getattr(sys, "frozen", False))
-                 + " exe=" + sys.executable + chr(10))
-    sys.stdout = _Tee(sys.stdout, handle)
-    sys.stderr = _Tee(sys.stderr, handle)
-    return path
 
 
 def _reset_settings():
@@ -314,9 +270,15 @@ def main(argv=None):
         # child of the running app.
         _run_signin_window()
         return
-    if args.debug or args.log:
-        log_path = args.log or os.path.join(tempfile.gettempdir(), "y2obi-debug.log")
-        print(f"[Y2obi] logging to {_start_logging(log_path)}")
+    # Logging is unconditional. It used to be behind --debug, which is never the
+    # run that went wrong: by the time a user reports something the evidence is
+    # gone and the only remedy is asking them to reproduce it. app/diagnostics.py
+    # caps and rotates the file, and keeps the session token out of it.
+    from app import diagnostics
+    written = diagnostics.start(args.log)
+    diagnostics.banner(VERSION)
+    if not written:
+        print("[Y2obi] could not open a log file; continuing without one")
     if args.cpu:
         # Read by app/server.py when it resolves the processing device.
         os.environ["Y2OBI_FORCE_CPU"] = "1"

@@ -12,3 +12,6 @@ import tempfile
 _SANDBOX = os.path.join(tempfile.gettempdir(), "y2obi_tests")
 os.environ["Y2OBI_HOME"] = os.path.join(_SANDBOX, "home")
 os.environ["Y2OBI_OUTPUT"] = os.path.join(_SANDBOX, "downloads")
+# The log is written on every run now, so it needs the same treatment or a
+# test run appends to the log of the app the user is actually using.
+os.environ["Y2OBI_LOG_DIR"] = os.path.join(_SANDBOX, "logs")

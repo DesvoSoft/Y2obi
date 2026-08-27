@@ -1152,8 +1152,19 @@ document.addEventListener('DOMContentLoaded', () => {
               <div class="model-meta" id="setStorageMeta"></div>
             </div>
           </div>
+          <div class="model-item">
+            <div>
+              <div class="model-title">Diagnostic log</div>
+              <div class="model-meta" id="setLogMeta"></div>
+            </div>
+            <div class="model-actions">
+              <button class="mini-btn" id="setOpenLogs">Open</button>
+            </div>
+          </div>
           <div class="ob-note">
-            Everything else the app writes is temporary and swept on the next launch.
+            The log records what the app did, never what you downloaded, and is
+            capped at 2 MB. Everything else the app writes is temporary and swept
+            on the next launch.
           </div>
         </div>
 
@@ -1221,6 +1232,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Storage
       panel.querySelector('#setOpenFolder').onclick = () => api('/api/open_folder', {method: 'POST'});
+      // Fetched rather than carried on the models response: a build without the
+      // speech engine answers that route with {available:false} and nothing else.
+      api('/api/config').then(r => r.json()).then(c => {
+        const el = panel.querySelector('#setLogMeta');
+        if (el && c.log_dir) el.innerHTML = `<code>${escHtml(c.log_dir)}</code>`;
+      }).catch(() => {});
       const partialTotal = allModels.reduce((a, m) => a + (m.partial_mb || 0), 0);
       const usedTotal = allModels.reduce((a, m) => a + (m.installed ? m.disk_mb : 0), 0);
       panel.querySelector('#setStorageMeta').innerHTML =

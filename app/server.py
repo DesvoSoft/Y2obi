@@ -23,6 +23,7 @@ from app import cleanup
 from app import converter
 from app import transcriber
 from app.binaries import get_whisper_cli
+from app import diagnostics
 
 _lock = threading.Lock()
 tasks = {}
@@ -970,6 +971,20 @@ def _explorer_command(target):
     if os.path.isdir(norm):
         return f'explorer "{norm}"'
     return f'explorer /select,"{norm}"'
+
+
+@app.route("/api/open_logs", methods=["POST"])
+def open_logs():
+    """Reveal the log folder. No path comes from the client."""
+    import subprocess
+    try:
+        target = diagnostics.log_dir()
+        os.makedirs(target, exist_ok=True)
+        subprocess.Popen(_explorer_command(target),
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        pass
+    return jsonify({"ok": True})
 
 
 @app.route("/api/open_folder", methods=["POST"])
