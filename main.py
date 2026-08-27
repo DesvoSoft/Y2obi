@@ -166,17 +166,29 @@ class Api:
     """
 
     def __init__(self):
-        self.window = None
+        # Underscored on purpose, and this is not style. pywebview builds the JS
+        # bridge by walking dir(js_api) and recursing into every public
+        # non-callable attribute -- see get_functions in webview/util.py, which
+        # skips names starting with "_". A public `window` here handed it the
+        # pywebview Window, so it walked on into window.native and the whole
+        # WinForms/.NET object graph: thousands of COM property reads off the UI
+        # thread, each one raising and being logged, until it hit the recursion
+        # limit. That is the wall of "Error while processing
+        # window.native.AccessibilityObject.Bounds.Empty.Empty..." at startup,
+        # and it is not cosmetic: the walk holds the GIL long enough that the
+        # stall watchdog fires at 20 s, which is the app "freezing in its first
+        # moments". One underscore ends the whole recursion.
+        self._window = None
 
     def pick_file(self):
         # Imported here, not at module scope: webview pulls in pythonnet/CLR and
         # the splash screen has to be up before that cost is paid.
         import webview
         from app.converter import AUDIO_EXTS, VIDEO_EXTS
-        if not self.window:
+        if not self._window:
             return None
         patterns = ";".join("*" + e for e in VIDEO_EXTS + AUDIO_EXTS)
-        result = self.window.create_file_dialog(
+        result = self._window.create_file_dialog(
             webview.OPEN_DIALOG,
             allow_multiple=False,
             file_types=(f"Audio and video ({patterns})", "All files (*.*)"),
@@ -262,6 +274,42 @@ def _run_signin_window():
     webview.start(private_mode=False, storage_path=profile)
 
 
+def _boot_server(splash, ffmpeg_path):
+    """Start Flask without letting the splash stop answering Windows.
+
+    start_server binds a port, boots Flask on a thread and then waits for that
+    port to accept a connection. Called straight from this thread it would stop
+    the splash pumping messages for as long as that takes, and a window that
+    stops pumping is a window Windows greys out and labels "Not responding" --
+    which is exactly what "it freezes in the first moments" describes.
+
+    So it runs on its own thread and we pump Tk until it is done. update() is
+    deliberate: it processes pending events and returns, unlike mainloop().
+    """
+    from app.server import start_server
+    out = {}
+
+    def _run():
+        try:
+            out["value"] = start_server(ffmpeg_path, DESKTOP_DIR)
+        except Exception as e:  # reported below, on the thread that can show UI
+            out["error"] = e
+
+    t = threading.Thread(target=_run, daemon=True, name="server-boot")
+    t.start()
+    while t.is_alive():
+        try:
+            splash.root.update()
+        except tk.TclError:
+            # The user closed the splash. Nothing left to pump; the server
+            # thread is a daemon and dies with the process.
+            break
+        time.sleep(0.03)
+    if "error" in out:
+        raise out["error"]
+    return out["value"]
+
+
 def main(argv=None):
     args = _parse_args(argv)
     _arm_stall_watchdog()
@@ -298,6 +346,17 @@ def main(argv=None):
             stage = "FFmpeg"
             from app.binaries import ensure_ffmpeg
             path = ensure_ffmpeg(progress_cb=lambda m: splash.root.after(0, lambda msg=m: splash.update(msg)))
+            # Warm the whisper backend probe here, on this thread. It spawns a
+            # subprocess and start_server calls it too, but it caches for the
+            # life of the process, so paying for it on the worker leaves almost
+            # nothing for the startup path to pay for later.
+            try:
+                from app import transcriber
+                from app.binaries import get_whisper_cli
+                transcriber.probe_backends(get_whisper_cli())
+                diagnostics.log_backends()
+            except Exception:
+                pass
             result["path"] = path
         except Exception as e:
             result["stage"] = stage
@@ -306,48 +365,62 @@ def main(argv=None):
     threading.Thread(target=_check, daemon=True).start()
 
     def _poll():
-        if result["path"]:
-            _launch(result["path"])
+        # Only ends the loop. Everything that follows runs from main()'s own
+        # frame -- see the comment below the mainloop call for why that matters.
+        if result["path"] or result["error"]:
+            splash.root.quit()
             return
-        if result["error"]:
-            # Reuse the splash root rather than destroying it and building
-            # another one just to own a message box.
-            splash.root.withdraw()
-            stage = result.get("stage") or "FFmpeg"
-            hint = (
-                "Install FFmpeg manually and add to PATH, or "
-                "place ffmpeg.exe in the 'core' folder."
-                if stage == "FFmpeg" else
-                "Install the Microsoft Edge WebView2 runtime manually, "
-                "then start Y2obi again."
-            )
-            messagebox.showerror(
-                f"{stage} Error",
-                f"Could not set up {stage}:\n{result['error']}\n\n{hint}",
-            )
-            splash.close()
-            sys.exit(1)
         splash.root.after(100, _poll)
 
-    def _launch(ffmpeg_path):
-        from app.server import start_server
-        # One Tk root for the whole pre-window phase. This used to close the
-        # splash, build a second root plus a Toplevel to say "Starting...", then
-        # tear both down before handing over to WinForms: three roots and two
-        # GUI toolkits in one process, for one line of text.
-        splash.update("Starting Y2obi...")
-        splash.root.update()   # paint it now; start_server blocks the loop next
+    splash.root.after(100, _poll)
+    splash.root.mainloop()
+    # quit() returns from mainloop and leaves the root alive, so the splash can
+    # still paint below while nothing runs nested inside a Tcl callback.
+    #
+    # This used to launch the app from inside _poll, which meant webview.start()
+    # -- and the WinForms message pump it owns -- ran on top of a mainloop frame
+    # that was still on the C stack. Two GUI toolkits stacked in one thread is
+    # what made the app wedge in its first seconds on an unrelated system event
+    # such as the clipboard panel taking focus.
 
-        # The token is handed to the page through the URL; the page sends it back
-        # as a header on every API call. See _require_token in app/server.py.
-        port, token = start_server(ffmpeg_path, DESKTOP_DIR)
-        url = f"http://127.0.0.1:{port}/?t={token}"
+    # mainloop also returns if the window itself went away -- the user closed
+    # the splash while the checks were still running. Nothing to launch, and
+    # touching a destroyed root below would raise instead of exiting quietly.
+    if not result["path"] and not result["error"]:
+        print("[Y2obi] startup cancelled")
+        return
 
+    if result["error"]:
+        splash.root.withdraw()
+        stage = result.get("stage") or "FFmpeg"
+        hint = (
+            "Install FFmpeg manually and add to PATH, or "
+            "place ffmpeg.exe in the 'core' folder."
+            if stage == "FFmpeg" else
+            "Install the Microsoft Edge WebView2 runtime manually, "
+            "then start Y2obi again."
+        )
+        messagebox.showerror(
+            f"{stage} Error",
+            f"Could not set up {stage}:" + chr(10) + result["error"] + chr(10) * 2 + hint,
+        )
         splash.close()
+        sys.exit(1)
 
-        import webview
-        # Sweep what a killed or crashed earlier run left in %TEMP%. Each
-        # abandoned onefile payload is ~150 MB.
+    splash.update("Starting Y2obi...")
+    port, token = _boot_server(splash, result["path"])
+    # The token is handed to the page through the URL; the page sends it back
+    # as a header on every API call. See _require_token in app/server.py.
+    url = f"http://127.0.0.1:{port}/?t={token}"
+    splash.close()
+
+    import webview
+    # Sweep what a killed or crashed earlier run left in %TEMP%. Each abandoned
+    # onefile payload is ~150 MB. On its own thread: it walks %TEMP% and renames
+    # directories to test whether they are in use, and doing that before the
+    # window exists is several seconds of a frozen-looking app for a chore
+    # nothing is waiting on.
+    def _sweep():
         try:
             from app.cleanup import sweep_temp
             n, freed = sweep_temp()
@@ -356,35 +429,34 @@ def main(argv=None):
         except Exception:
             pass
 
-        # Sized so the full stack (info card + every option row + progress) fits
-        # without scrolling; the page scrolls if the user shrinks it below this.
-        api = Api()
-        api.window = webview.create_window(
-            "Y2obi",
-            url,
-            width=940,
-            # 900, not 780: with the transcript rows and the progress card open
-            # the panel measures 782 px of content, and a 780 px window only
-            # leaves 688 px of viewport once Windows takes its chrome, so the
-            # bottom of the app needed scrolling to reach.
-            height=900,
-            min_size=(700, 620),
-            resizable=True,
-            js_api=api,
-        )
-        # A fixed profile directory instead of pywebview's default private mode:
-        # private mode makes a fresh temp profile per launch and only removes it
-        # on a clean exit, so every kill leaves another ~12 MB EBWebView folder
-        # behind. One reusable folder cannot pile up.
-        storage = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()),
-                               "Y2obi", "webview")
-        os.makedirs(storage, exist_ok=True)
-        # debug=True turns on right-click Inspect in the window.
-        webview.start(private_mode=False, storage_path=storage,
-                      debug=bool(args.debug))
+    threading.Thread(target=_sweep, daemon=True, name="temp-sweep").start()
 
-    splash.root.after(100, _poll)
-    splash.root.mainloop()
+    # Sized so the full stack (info card + every option row + progress) fits
+    # without scrolling; the page scrolls if the user shrinks it below this.
+    api = Api()
+    api._window = webview.create_window(
+        "Y2obi",
+        url,
+        width=940,
+        # 900, not 780: with the transcript rows and the progress card open
+        # the panel measures 782 px of content, and a 780 px window only
+        # leaves 688 px of viewport once Windows takes its chrome, so the
+        # bottom of the app needed scrolling to reach.
+        height=900,
+        min_size=(700, 620),
+        resizable=True,
+        js_api=api,
+    )
+    # A fixed profile directory instead of pywebview's default private mode:
+    # private mode makes a fresh temp profile per launch and only removes it
+    # on a clean exit, so every kill leaves another ~12 MB EBWebView folder
+    # behind. One reusable folder cannot pile up.
+    storage = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()),
+                           "Y2obi", "webview")
+    os.makedirs(storage, exist_ok=True)
+    # debug=True turns on right-click Inspect in the window.
+    webview.start(private_mode=False, storage_path=storage,
+                  debug=bool(args.debug))
 
 
 if __name__ == "__main__":
