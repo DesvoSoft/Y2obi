@@ -1060,6 +1060,21 @@ def start_server(ffmpeg_path, static_dir, port=0):
     t = threading.Thread(target=_run, daemon=True)
     t.start()
 
+    # A frozen exe picks a random port and mints a token that is deliberately
+    # never printed, which also makes it impossible to drive the built app from
+    # a test harness -- and the built app is the only place several of this
+    # project's bugs have ever appeared. Setting Y2OBI_SESSION_FILE asks the
+    # server to drop the pair in that file. Nothing writes it otherwise, so a
+    # released run leaves no credential on disk.
+    session_file = os.environ.get("Y2OBI_SESSION_FILE")
+    if session_file:
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(session_file)), exist_ok=True)
+            with open(session_file, "w", encoding="utf-8") as f:
+                json.dump({"port": port, "token": _session_token}, f)
+        except OSError as e:
+            print(f"[Y2obi] could not write the session file: {e}")
+
     # Wait until port accepts connections
     import time as _time
     deadline = _time.time() + 10
