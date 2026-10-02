@@ -7,6 +7,7 @@ chunk avoids it. Chunks are sliced out of the 16 kHz mono WAV so each
 whisper-cli process reads only its own slice and emits slice-relative
 timestamps that we shift back ourselves.
 """
+import codecs
 import math
 import os
 import re
@@ -162,9 +163,36 @@ def _slice_wav(src, dst, start_s, dur_s):
         o.writeframes(frames)
 
 
+def _ansi_codepage():
+    try:
+        import locale
+        enc = locale.getencoding()
+        codecs.lookup(enc)
+        return enc
+    except (AttributeError, LookupError):
+        return "cp1252"
+
+
+# whisper-cli takes argv through the ANSI code page (narrow main), so a --prompt
+# carrying "más" reaches it as the single byte 0xE1, and whisper copies those
+# bytes into the cue that overlaps the prompt. The rest of the file is UTF-8.
+_ANSI_CODEPAGE = _ansi_codepage()
+
+
+def _ansi_fallback(err):
+    bad = err.object[err.start:err.end]
+    return bad.decode(_ANSI_CODEPAGE, "replace"), err.end
+
+
+codecs.register_error("y2obi_ansi", _ansi_fallback)
+
+
 def _parse_srt(path):
-    with open(path, encoding="utf-8") as f:
-        lines = f.read().split("\n")
+    # UTF-8, except bytes that are not: those are read in the ANSI code page,
+    # which turns whisper's echoed prompt back into the word it was. Strict
+    # UTF-8 used to fail the whole transcription on one accented letter.
+    with open(path, "rb") as f:
+        lines = f.read().decode("utf-8", "y2obi_ansi").split("\n")
     cues = []
     i = 0
     while i < len(lines):

@@ -46,6 +46,27 @@ class ParseSrt(unittest.TestCase):
             f.write(text)
         return tr._parse_srt(p)
 
+    def _parse_bytes(self, data):
+        p = os.path.join(self.dir, "a.srt")
+        with open(p, "wb") as f:
+            f.write(data)
+        return tr._parse_srt(p)
+
+    def test_ansi_bytes_from_the_prompt_do_not_break_parsing(self):
+        """Windows hands --prompt to whisper-cli in the ANSI code page, and
+        whisper echoes those bytes into the cue that overlaps the prompt. Seen
+        on ndF4Y9QeCgQ with large-v3-turbo: one "m\\xe1s" among 100 accents
+        written correctly, and the whole transcription died on it."""
+        data = ("1\r\n00:00:01,000 --> 00:00:02,000\r\n"
+                "agua limpia a personas ").encode("utf-8") + b"m\xe1s abajo.\r\n\r\n" + \
+               "2\r\n00:00:03,000 --> 00:00:04,000\r\nconservación\r\n\r\n".encode("utf-8")
+        cues = self._parse_bytes(data)
+        self.assertEqual(len(cues), 2)
+        self.assertIn("abajo", cues[0]["text"])
+        if tr._ANSI_CODEPAGE == "cp1252":
+            self.assertIn("más", cues[0]["text"])
+        self.assertEqual(cues[1]["text"], "conservación")
+
     def test_basic_cues(self):
         cues = self._parse(
             "1\n00:00:01,500 --> 00:00:03,000\nhello there\n\n"
