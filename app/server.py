@@ -22,7 +22,7 @@ from app.downloader import has_session_cookies, parse_clip, ClipError
 from app import cleanup
 from app import converter
 from app import transcriber
-from app.binaries import get_whisper_cli
+from app.binaries import get_whisper_cli, get_deno
 from app import diagnostics
 from app import updates
 from app.version import VERSION
@@ -118,7 +118,7 @@ def _make_dl():
     # visitor id, and handing YouTube one that has already been throttled makes
     # the block stick instead of lifting it.
     cookies = COOKIES_PATH if has_session_cookies(COOKIES_PATH) else None
-    return Downloader(_ffmpeg_path, cookies=cookies)
+    return Downloader(_ffmpeg_path, cookies=cookies, deno=get_deno())
 
 
 def _progress_cb(task_id):
@@ -778,7 +778,7 @@ def _run_transcribe(task_id, src, model, lang, is_file=False, ts_interval=0,
                  _done_at=time.time())
         else:
             _set(task_id, error=msg, status="Error", done=True,
-                 needs_cookies=isinstance(e, AuthRequired), _done_at=time.time())
+                 needs_cookies=isinstance(e, BLOCKED), _done_at=time.time())
     finally:
         _set(task_id, _tr=None, _dl=None)
         shutil.rmtree(tmp_dir, ignore_errors=True)

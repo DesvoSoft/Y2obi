@@ -268,12 +268,49 @@ def _run_signin_window():
     import webview
     profile = signin_profile_dir()
     os.makedirs(profile, exist_ok=True)
-    webview.create_window(
-        "Sign in to YouTube",
+    window = webview.create_window(
+        "Sign in to YouTube - this window closes by itself once you are in",
         "https://www.youtube.com/account",
         width=980, height=800, min_size=(520, 480), resizable=True,
     )
-    webview.start(private_mode=False, storage_path=profile)
+    webview.start(_close_when_signed_in, (window,),
+                  private_mode=False, storage_path=profile)
+
+
+def cookies_prove_session(cookies):
+    """True if pywebview's cookie list holds a signed-in YouTube session.
+
+    get_cookies() returns SimpleCookie objects, one name each.
+    """
+    from app.downloader import SESSION_COOKIES
+    for c in cookies or ():
+        for name, morsel in c.items():
+            if name in SESSION_COOKIES and morsel.value:
+                return True
+    return False
+
+
+def _close_when_signed_in(window, poll_s=1.5, settle_s=2.0):
+    """Close the sign-in window as soon as the session exists.
+
+    The parent only reads the profile once this process exits, and nothing in
+    the window said so: a user who signed in simply carried on browsing YouTube
+    there and Y2obi never heard about it. Polling the window's own cookies is
+    what tells us the sign-in is done. settle_s lets Google finish its redirect
+    chain so the rest of the session cookies land before we close.
+    """
+    while True:
+        time.sleep(poll_s)
+        try:
+            url = window.get_current_url() or ""
+            if "youtube.com" in url and cookies_prove_session(window.get_cookies()):
+                time.sleep(settle_s)
+                window.destroy()
+                return
+        except Exception:
+            # The user closed the window first; the parent reads the profile
+            # either way, so there is nothing left to do.
+            return
 
 
 def _boot_server(splash, ffmpeg_path):

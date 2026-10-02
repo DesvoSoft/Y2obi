@@ -1804,6 +1804,18 @@ document.addEventListener('DOMContentLoaded', () => {
     syncCookieBadge();
   }
 
+  // Opens Y2obi's own sign-in window and resolves once the session is read out
+  // of it. Shared by the Settings menu and the error box so both behave alike.
+  function signInToYouTube() {
+    return api('/api/cookies/signin', {method: 'POST'})
+      .then(r => r.json())
+      .then(d => {
+        if (!d.ok) throw new Error(d.reason || 'Sign-in did not complete.');
+        setCookieLabel('signed in');
+        hideError();
+      }, () => { throw new Error('Sign-in did not complete.'); });
+  }
+
   function showCookieMenu() {
     const existing = document.getElementById('cookieMenu');
     if (existing) { existing.remove(); return; }
@@ -1813,13 +1825,14 @@ document.addEventListener('DOMContentLoaded', () => {
     menu.innerHTML = `
       <h3>Connect your YouTube session</h3>
       <div class="menu-list">
-        <button class="primary" id="exportFirefox">Firefox (recommended)</button>
+        <button class="primary" id="signinWindow">Sign in to YouTube (recommended)</button>
+        <button id="exportFirefox">Firefox</button>
         <button id="exportEdge">Edge (close first)</button>
         <button id="exportBrave">Brave (close first)</button>
         <button id="exportChrome">Chrome (close first)</button>
         <button id="uploadCookieFile">Use a cookies.txt file instead</button>
       </div>
-      <div class="menu-note">Reads the session your browser already has. Nothing leaves this machine.<br>Edge, Chrome and Brave must be fully closed first; Firefox can stay open.</div>`;
+      <div class="menu-note">Sign in opens a YouTube window of Y2obi's own: sign in there, then close it.<br>The browser options read a session you already have; Edge, Chrome and Brave usually refuse.</div>`;
     document.body.appendChild(menu);
     const closeMenu = () => {
       menu.remove();
@@ -1842,6 +1855,15 @@ document.addEventListener('DOMContentLoaded', () => {
           else { toast('Failed: ' + (d.reason || 'unknown error')); setCookieLabel('off'); }
         })
         .catch(() => { toast('Cookie export failed'); setCookieLabel('off'); });
+    };
+    // The only route that works on a current Chromium, so it comes first: the
+    // browser buttons below hit App-Bound Encryption on Edge, Chrome and Brave.
+    document.getElementById('signinWindow').onclick = () => {
+      menu.remove();
+      COOKIE_LINK.textContent = 'Waiting for the sign-in window...';
+      signInToYouTube()
+        .then(() => toast('Signed in to YouTube'))
+        .catch(err => { toast(err.message); syncCookieBadge(); });
     };
     document.getElementById('exportFirefox').onclick = () => doExport('firefox');
     document.getElementById('exportEdge').onclick    = () => doExport('edge');
@@ -1912,16 +1934,9 @@ document.addEventListener('DOMContentLoaded', () => {
     signin.onclick = () => {
       ERROR_ACTIONS.querySelectorAll('button').forEach(x => x.disabled = true);
       signin.textContent = 'Waiting for the sign-in window...';
-      api('/api/cookies/signin', {method: 'POST'})
-        .then(r => r.json())
-        .then(d => {
-          if (!d.ok) { showAuthError(d.reason || 'Sign-in did not complete.', browsers, retry); return; }
-          setCookieLabel('signed in');
-          hideError();
-          toast('Signed in to YouTube');
-          if (retry) retry();
-        })
-        .catch(() => showAuthError('Sign-in did not complete.', browsers, retry));
+      signInToYouTube()
+        .then(() => { toast('Signed in to YouTube'); if (retry) retry(); })
+        .catch(err => showAuthError(err.message, browsers, retry));
     };
     ERROR_ACTIONS.appendChild(signin);
 

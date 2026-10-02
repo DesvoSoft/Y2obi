@@ -59,6 +59,40 @@ def _check_whisper_manifest():
 
 _check_whisper_manifest()
 
+# deno runs yt-dlp's YouTube challenge solver (yt-dlp-ejs). Without it a
+# signed-in request gets thumbnails only, because the clients that accept
+# cookies all need the JS "n challenge" solved. The official release zip from
+# github.com/denoland/deno; the full binary, because denort cannot run scripts.
+# Pinned like whisper: an unverified runtime that executes YouTube's JS is not
+# something to pick up by accident.
+DENO_VERSION = '2.9.7'
+DENO_SHA256 = 'e020f3e232bd16e33768dee528e5983349c962952051ced0a5d58ad42f5d9b33'
+
+
+def _check_deno():
+    import hashlib
+    path = os.path.join('core', 'deno', 'deno.exe')
+    if not os.path.exists(path):
+        raise SystemExit(
+            f'{path} is missing. Unzip deno-x86_64-pc-windows-msvc.zip from '
+            f'denoland/deno v{DENO_VERSION} into core/deno/.')
+    h = hashlib.sha256()
+    with open(path, 'rb') as fh:
+        for block in iter(lambda: fh.read(1 << 20), b''):
+            h.update(block)
+    if h.hexdigest() != DENO_SHA256:
+        raise SystemExit(f'{path} is not deno v{DENO_VERSION} as pinned in build.spec.')
+
+
+_check_deno()
+
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+# The solver scripts are .js files read as package data, which PyInstaller does
+# not pick up on its own; yt-dlp imports the package lazily inside a try, so a
+# missing copy would degrade silently to "thumbnails only".
+ejs_datas = collect_data_files('yt_dlp_ejs')
+ejs_imports = collect_submodules('yt_dlp_ejs')
+
 a = Analysis(
     ['main.py'],
     pathex=[],
@@ -74,6 +108,9 @@ a = Analysis(
         # they are loaded by whisper-cli.exe as a separate process, so letting
         # PyInstaller walk their imports buys nothing and can mangle them.
         *whisper_datas,
+        # JS runtime for the YouTube challenge solver (see _check_deno above).
+        (os.path.join('core', 'deno', 'deno.exe'), os.path.join('core', 'deno')),
+        *ejs_datas,
     ],
     hiddenimports=[
         # pywebview Windows backend
@@ -107,6 +144,7 @@ a = Analysis(
         'yt_dlp.downloader',
         'yt_dlp.postprocessor',
         'yt_dlp.networking',
+        *ejs_imports,
     ],
     hookspath=[],
     hooksconfig={},

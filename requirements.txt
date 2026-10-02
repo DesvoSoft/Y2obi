@@ -4,5 +4,8 @@
 # from landing in a release untested: raise it deliberately, and run the suite,
 # which checks the player-client ladder against whatever version is installed.
 yt-dlp>=2026.6.9,<2027
+# YouTube's JS challenge solver scripts, run by the bundled deno. Without them a
+# signed-in request gets thumbnails only. Pure data, ~50 KB.
+yt-dlp-ejs>=0.8.0,<1
 flask>=3.0.0
 pywebview>=5.0.0

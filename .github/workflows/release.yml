@@ -100,6 +100,23 @@ jobs:
           Remove-Item whisper.zip, vulkan.zip
           Remove-Item -Recurse -Force whisper-extract, vulkan-extract
 
+      - name: Download deno
+        shell: pwsh
+        run: |
+          # Runs yt-dlp's YouTube challenge solver; a signed-in session gets
+          # thumbnails only without it. Pinned in build.spec (DENO_VERSION and
+          # DENO_SHA256), which refuses to build on a mismatch; checked here too
+          # so a drift is named instead of buried in the PyInstaller log.
+          $version = '2.9.7'
+          $expected = 'e020f3e232bd16e33768dee528e5983349c962952051ced0a5d58ad42f5d9b33'
+          New-Item -ItemType Directory -Force -Path core/deno | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/denoland/deno/releases/download/v$version/deno-x86_64-pc-windows-msvc.zip" -OutFile deno.zip
+          Expand-Archive -Path deno.zip -DestinationPath core/deno -Force
+          Remove-Item deno.zip
+          $actual = (Get-FileHash -Path core/deno/deno.exe -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $expected) { throw "deno.exe sha256 $actual, expected $expected" }
+          & core/deno/deno.exe --version
+
       - name: Verify the pinned binaries
         shell: pwsh
         run: |
@@ -139,7 +156,8 @@ jobs:
                      "commit $env:GITHUB_SHA", "runner $env:RUNNER_OS", "")
           $lines += "python  $(python --version)"
           $lines += "pyinstaller $(pyinstaller --version)"
-          $lines += (pip freeze | Where-Object { $_ -match '^(yt-dlp|flask|pywebview|werkzeug)=' })
+          $lines += (pip freeze | Where-Object { $_ -match '^(yt-dlp|yt-dlp-ejs|flask|pywebview|werkzeug)=' })
+          $lines += "deno    sha256 $((Get-FileHash core/deno/deno.exe -Algorithm SHA256).Hash.ToLower())"
           $lines += ""
           $ff = & core/ffmpeg.exe -version 2>&1 | Select-Object -First 1
           $lines += "ffmpeg  $ff"

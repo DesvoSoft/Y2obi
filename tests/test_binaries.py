@@ -115,6 +115,27 @@ class ResolutionOrder(unittest.TestCase):
             del sys._MEIPASS
         self.assertEqual(binaries.get_whisper_cli(), core)
 
+    def test_deno_is_looked_for_inside_core_deno(self):
+        name = "deno.exe" if os.name == "nt" else "deno"
+        core = self._make("root", "core", "deno", name)
+        self._use_core(os.path.join(self.dir, "root"))
+        os.environ.pop("Y2OBI_DENO", None)
+        if hasattr(sys, "_MEIPASS"):
+            del sys._MEIPASS
+        self.assertEqual(binaries.get_deno(), core)
+
+    def test_deno_path_is_absolute(self):
+        # yt-dlp reports "JS runtimes: none" for a relative path, silently.
+        name = "deno.exe" if os.name == "nt" else "deno"
+        self._make("pinned", name)
+        old = os.getcwd()
+        os.chdir(self.dir)
+        try:
+            os.environ["Y2OBI_DENO"] = os.path.join("pinned", name)
+            self.assertTrue(os.path.isabs(binaries.get_deno()))
+        finally:
+            os.chdir(old)
+
 
 class CoreDir(unittest.TestCase):
     def test_frozen_looks_beside_the_executable(self):

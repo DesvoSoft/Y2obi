@@ -33,7 +33,12 @@ QUALITY_MAP_WEBM = {
 # barely serves any more, so it is a fallback that almost never fires. best*
 # accepts a format with either, and the acodec filter keeps us from happily
 # downloading a silent video stream to transcribe.
-AUDIO_FORMAT = "bestaudio/best*[acodec!=none]/best"
+#
+# HLS before plain https among the muxed fallbacks: without a PO token YouTube
+# serves format 18 (https, 360p) as a ~600 KB stub of the real file, on every
+# client measured, while web_safari's HLS renditions come through whole.
+AUDIO_FORMAT = ("bestaudio/best*[acodec!=none][protocol^=m3u8]"
+                "/best*[acodec!=none]/best")
 
 # One client per rung, never a pair. yt-dlp merges the formats of every client
 # in a rung, so pairing a working client with a blocked one poisons the list:
@@ -52,6 +57,24 @@ AUDIO_FORMAT = "bestaudio/best*[acodec!=none]/best"
 # They must stay the same ladder: pinning downloads to the first pair alone made any video that
 # only resolved via tv_embedded/web analyze fine and then fail at download.
 PLAYER_CLIENTS = (['android_vr'], ['android'], ['web_safari'], ['web'])
+
+# The ladder for a signed-in session. android_vr and android refuse cookies:
+# yt-dlp drops them with a warning, leaves the rung empty and fails it with "No
+# player clients have been requested", so a session made the two rungs that
+# work anonymously into wasted attempts. These accept cookies but need the JS
+# challenge solver (deno + yt-dlp-ejs); without it they return thumbnails only.
+# Measured 2026-10-02 on aXRImge9EH4 with a real session: web_safari 25 formats
+# with audio, web 1 (format 18), tv_downgraded "The page needs to be reloaded".
+# The anonymous ladder runs after these, without the cookies, so an expired
+# session costs time rather than the download.
+AUTHED_CLIENTS = (['web_safari'], ['web'])
+
+# Signed-in web_safari offers no audio-only stream, only HLS with video, and
+# plain "best" then means a 780 MB 1080p file to get 24 minutes of speech. The
+# 360p HLS rendition carries the same 128k audio. Sorting by resolution only
+# breaks ties among audio-only formats, which have none, so it does not
+# degrade the anonymous path.
+AUDIO_SORT = ['res:360']
 
 
 class DownloadError(Exception):
@@ -156,7 +179,16 @@ _EMPTY_MARKERS = (
     "requested format is not available",
     "no video formats found",
     "unable to extract player response",
+    "stream was cut short",
 )
+
+# Raised from _hook when YouTube hands over a stub of the stream. Worded so
+# looks_like_no_streams() matches it: it is the same throttling, seen later.
+TRUNCATED_MSG = "YouTube stream was cut short"
+
+# Below this fraction of the advertised size a file is a stub, not a download.
+# filesize_approx can be off, but not by half.
+_TRUNCATED_RATIO = 0.5
 
 
 def looks_like_no_streams(text):
@@ -230,16 +262,21 @@ def has_session_cookies(path):
 
 
 def _parse_formats(info):
-    """Return available video qualities and whether audio-only is available."""
+    """Return available video qualities and whether any stream carries audio.
+
+    Muxed counts: AUDIO_FORMAT falls back to video-with-audio, and a signed-in
+    web_safari session offers nothing else. Counting audio-only streams alone
+    made the page refuse MP3 and transcripts that would have downloaded fine.
+    """
     fmts = info.get("formats") or []
     heights = set()
-    has_audio_only = False
+    has_audio = False
     for f in fmts:
         h = f.get("height")
         if h and f.get("vcodec") not in (None, "none"):
             heights.add(h)
-        if f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none"):
-            has_audio_only = True
+        if f.get("acodec") not in (None, "none"):
+            has_audio = True
     # Map heights to quality labels
     label_map = {2160: "2160p", 1440: "1440p", 1080: "1080p", 720: "720p", 480: "480p", 360: "360p", 240: "240p", 144: "144p"}
     quality_labels = []
@@ -249,7 +286,7 @@ def _parse_formats(info):
             quality_labels.append(lbl)
     if not quality_labels:
         quality_labels = ["Best"]
-    return quality_labels, has_audio_only
+    return quality_labels, has_audio
 
 
 class ClipError(ValueError):
@@ -321,9 +358,10 @@ def clip_label(clip):
 
 
 class Downloader:
-    def __init__(self, ffmpeg_path="ffmpeg", cookies=None):
+    def __init__(self, ffmpeg_path="ffmpeg", cookies=None, deno=None):
         self.ffmpeg_path = ffmpeg_path
         self.cookies = cookies
+        self.deno = deno
         self._progress_cb = None
         self._status_cb = None
         self._cancel = False
@@ -340,6 +378,22 @@ class Downloader:
         if self.cookies and os.path.exists(self.cookies):
             opts["cookiefile"] = self.cookies
 
+    def _ladder(self):
+        """(clients, use_cookies) rungs: the session's first, then anonymous."""
+        anon = [(c, False) for c in PLAYER_CLIENTS]
+        if self.cookies and os.path.exists(self.cookies):
+            return [(c, True) for c in AUTHED_CLIENTS] + anon
+        return anon
+
+    def _rung_opts(self, opts, clients, use_cookies):
+        opts['extractor_args'] = {'youtube': {'player_client': list(clients)}}
+        opts.pop('cookiefile', None)
+        if use_cookies:
+            self._apply_cookies_file_only(opts)
+        if self.deno:
+            opts['js_runtimes'] = {'deno': {'path': self.deno}}
+        return opts
+
     def get_info(self, url):
         opts = {
             'quiet': True,
@@ -355,11 +409,10 @@ class Downloader:
             'extract_flat': False,
             'noplaylist': True,
         }
-        self._apply_cookies_file_only(opts)
         info = None
         last_err = None
-        for clients in PLAYER_CLIENTS:
-            opts['extractor_args'] = {'youtube': {'player_client': clients}}
+        for clients, use_cookies in self._ladder():
+            self._rung_opts(opts, clients, use_cookies)
             try:
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url, download=False)
@@ -478,11 +531,16 @@ class Downloader:
         format selector and the postprocessors they add.
         """
         self._cancel = False
+        self._clipping = 'download_ranges' in fmt_opts
         last_err = None
-        for clients in PLAYER_CLIENTS:
+        # The first error's text is the precise one, but a block reported by a
+        # later rung is still a block: android_vr answering 403 and android then
+        # serving a truncated stub must reach the user as "sign in", not as 403.
+        blocked = auth = False
+        for clients, use_cookies in self._ladder():
             opts = self._base_opts(template)
             opts.update(fmt_opts)
-            opts['extractor_args'] = {'youtube': {'player_client': list(clients)}}
+            self._rung_opts(opts, clients, use_cookies)
             ydl = yt_dlp.YoutubeDL(opts)
             try:
                 info = ydl.extract_info(url, download=True)
@@ -490,6 +548,8 @@ class Downloader:
                 if "Cancelled" in str(e):
                     raise
                 last_err = last_err or e
+                auth = auth or looks_like_auth_error(e)
+                blocked = blocked or looks_like_no_streams(e)
                 continue
             except Exception as e:
                 raise DownloadError(f"Unexpected error: {e}\n\n{traceback.format_exc()}") from e
@@ -502,12 +562,12 @@ class Downloader:
             # Extraction worked, so another client will not help.
             raise DownloadError(f"No file — {what} did not produce output")
 
-        if looks_like_auth_error(last_err):
+        if auth:
             raise AuthRequired(
                 "YouTube wants to confirm you are signed in before it hands "
                 "this video over."
             ) from last_err
-        if looks_like_no_streams(last_err):
+        if blocked:
             raise StreamsUnavailable(
                 "YouTube did not offer a usable stream for this video. That "
                 "usually means it is throttling requests that are not signed in."
@@ -539,6 +599,7 @@ class Downloader:
         template = os.path.join(output_dir, f"%(title)s{clip_label(clip)}.%(ext)s")
         return self._run_download(url, template, {
             'format': AUDIO_FORMAT,
+            'format_sort': AUDIO_SORT,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -556,7 +617,8 @@ class Downloader:
         """
         template = os.path.join(output_dir, "%(title)s.%(ext)s")
         return self._run_download(url, template,
-                                  {'format': AUDIO_FORMAT, **self._clip_opts(clip)},
+                                  {'format': AUDIO_FORMAT, 'format_sort': AUDIO_SORT,
+                                   **self._clip_opts(clip)},
                                   what="audio download")
 
     def _hook(self, d):
@@ -574,8 +636,35 @@ class Downloader:
                 if self._progress_cb:
                     self._progress_cb(pct, d.get('speed', 0), d.get('eta', 0))
         elif d['status'] == 'finished':
+            self._check_truncated(d)
             if self._status_cb:
                 self._status_cb("Processing...")
+
+    def _check_truncated(self, d):
+        """Refuse a stub that yt-dlp considers complete.
+
+        A throttled anonymous fetch can get the first few hundred KB with a
+        Content-Length to match, so nothing in yt-dlp complains. Left alone it
+        is merged/converted into a file with a full-length header and seconds
+        of data, and fails much later as an unreadable-audio error. Raising
+        here sends the ladder on to the next client instead.
+        """
+        if getattr(self, '_clipping', False):
+            return
+        info = d.get('info_dict') or {}
+        expected = info.get('filesize') or info.get('filesize_approx')
+        path = d.get('filename')
+        if not expected or not path or not os.path.isfile(path):
+            return
+        got = os.path.getsize(path)
+        if got >= expected * _TRUNCATED_RATIO:
+            return
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise yt_dlp.utils.DownloadError(
+            f"{TRUNCATED_MSG}: got {got} of {expected} bytes")
 
     def _pp_hook(self, d):
         # Postprocessing fires no download hooks, so without this a Cancel

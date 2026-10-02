@@ -121,6 +121,20 @@ def get_whisper_cli():
     return _resolve(("core", "whisper", name), "Y2OBI_WHISPER", "whisper-cli")
 
 
+def get_deno():
+    """deno.exe for yt-dlp's YouTube challenge solver, or None.
+
+    YouTube's web clients scramble stream URLs with a JS "n challenge"; without
+    a runtime to solve it a signed-in request gets nothing but thumbnails. The
+    android clients that work without one refuse cookies, so a session is
+    useless without this. Absolute on purpose: yt-dlp silently reports
+    "JS runtimes: none" when handed a relative path. Never downloaded.
+    """
+    name = "deno.exe" if os.name == "nt" else "deno"
+    found = _resolve(("core", "deno", name), "Y2OBI_DENO", "deno")
+    return os.path.abspath(found) if found else None
+
+
 def ensure_ffmpeg(progress_cb=None):
     """Path to a usable ffmpeg, downloading it once if there is none.
 

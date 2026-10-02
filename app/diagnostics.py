@@ -170,6 +170,14 @@ def banner(version):
         # later, from the worker that warms the cache anyway.
         out.append(f"ffmpeg   {binaries._get_bundled_ffmpeg() or '(none found yet)'}")
         out.append(f"whisper  {binaries.get_whisper_cli() or '(not in this build)'}")
+        out.append(f"deno     {binaries.get_deno() or '(not in this build)'}")
+        # Without the solver scripts deno has nothing to run, and a signed-in
+        # session degrades to thumbnails only with no error of its own.
+        try:
+            import yt_dlp_ejs  # noqa: F401
+            out.append("ejs      yt-dlp-ejs present")
+        except ImportError:
+            out.append("ejs      MISSING -- signed-in downloads will fail; pip install -r requirements.txt")
     except Exception as e:
         out.append(f"binaries could not be resolved for the banner: {e}")
     out.append("=" * 62)
