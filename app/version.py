@@ -10,7 +10,7 @@ asserts the two agree, because a mismatch there is invisible until someone reads
 the properties of a shipped exe.
 """
 
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 
 
 def as_tuple(text=None):
