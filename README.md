@@ -61,6 +61,7 @@ Getting past the warning:
 - Whole playlists and channels, see [Playlists](#playlists)
 - Trim a download to a time range (`1:30` to `4:05`)
 - Progress with speed and ETA, and it skips files you already downloaded
+- If YouTube cuts the stream off and only a lower quality comes through, the app tells you, and the file is named after the quality it really has (`Title [360p].mp4`), so downloading again retries instead of skipping it. Signing in usually avoids this
 - Optional YouTube sign-in for age-restricted, private or throttled videos
 
 **Transcribing**
