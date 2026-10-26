@@ -498,5 +498,28 @@ def main(argv=None):
                   debug=bool(args.debug))
 
 
+def _relaunch_in_venv():
+    """Run from source with the wrong interpreter, hand off to .venv.
+
+    `python main.py` resolves to whatever Python the install manager made the
+    default -- a 3.15 upgrade with no packages crashed on `import flask` while
+    the project's .venv sat right there with everything installed.
+    """
+    if getattr(sys, "frozen", False):
+        return
+    try:
+        import flask  # noqa: F401
+        return
+    except ImportError:
+        pass
+    here = os.path.dirname(os.path.abspath(__file__))
+    venv_py = os.path.join(here, ".venv", "Scripts", "python.exe")
+    if not os.path.isfile(venv_py) or os.path.normcase(
+            os.path.abspath(sys.executable)) == os.path.normcase(venv_py):
+        return
+    sys.exit(subprocess.call([venv_py, os.path.abspath(__file__), *sys.argv[1:]]))
+
+
 if __name__ == "__main__":
+    _relaunch_in_venv()
     main()
