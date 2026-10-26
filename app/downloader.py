@@ -1,6 +1,8 @@
 import yt_dlp
 import os
+import re
 import traceback
+import urllib.parse
 
 # No PO token provider is bundled. The import used to sit here behind a
 # try/except, which meant this machine could have one and a CI build never
@@ -357,6 +359,100 @@ def clip_label(clip):
     return f" [{_stamp(start)}-{tail}]"
 
 
+_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_LIST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{2,64}$")
+
+# What YouTube puts in a playlist where a video used to be. They still take a
+# slot, and with it a number, so they are listed rather than dropped -- but
+# there is nothing to fetch behind them.
+_GONE_TITLES = ("[private video]", "[deleted video]", "[unavailable video]")
+
+
+def is_video_id(text):
+    return bool(_VIDEO_ID_RE.match(str(text or "")))
+
+
+def playlist_ref(url):
+    """(list_id, has_video) for a YouTube URL, or (None, has_video).
+
+    has_video says whether the URL also names a single video, which decides
+    the default: a /playlist link means the list, a watch link that happens to
+    carry &list= means that one video, with the list offered as an option.
+    """
+    try:
+        parts = urllib.parse.urlsplit(str(url).strip())
+    except ValueError:
+        return None, False
+    query = urllib.parse.parse_qs(parts.query)
+    host = (parts.hostname or "").lower()
+    path = parts.path or ""
+    has_video = (bool(query.get("v"))
+                 or (host.endswith("youtu.be") and len(path) > 1)
+                 or path.startswith(("/shorts/", "/live/", "/embed/")))
+    list_id = (query.get("list") or [None])[0]
+    if list_id and not _LIST_ID_RE.match(list_id):
+        list_id = None
+    return list_id, has_video
+
+
+def is_mix(list_id):
+    """Mixes (RD...) are generated per viewer and have no fixed end, so they
+    are not offered as something to work through."""
+    return str(list_id or "").startswith("RD")
+
+
+def playlist_entries(info):
+    """The videos of a flat playlist extraction, numbered in playlist order.
+
+    Anything that is not a single video (a channel's tabs, a nested playlist)
+    is skipped: there is no one thing to transcribe behind it.
+    """
+    out = []
+    for e in info.get("entries") or []:
+        if not e or not is_video_id(e.get("id")):
+            continue
+        if e.get("ie_key") not in (None, "Youtube"):
+            continue
+        title = str(e.get("title") or e["id"])
+        out.append({
+            "index": len(out) + 1,
+            "id": e["id"],
+            "title": title,
+            "duration": int(e["duration"]) if e.get("duration") else None,
+            "channel": e.get("channel") or e.get("uploader") or "",
+            "available": title.lower() not in _GONE_TITLES,
+        })
+    return out
+
+
+_RESERVED_NAMES = frozenset(
+    ["CON", "PRN", "AUX", "NUL"] + [f"COM{i}" for i in range(1, 10)]
+    + [f"LPT{i}" for i in range(1, 10)])
+
+
+def safe_filename(text, fallback, limit=120):
+    """A Windows-safe file or folder name made from a YouTube title.
+
+    The same sanitiser yt-dlp applies to its own output names, then the two
+    things it leaves to the filesystem: trailing dots and spaces, which
+    Windows silently strips (so the file we check for is not the file we
+    wrote), and device names like CON, which it refuses outright.
+    """
+    name = yt_dlp.utils.sanitize_filename(str(text or ""))
+    name = name.strip()[:limit].rstrip(". ")
+    if not name or name in (".", ".."):
+        return fallback
+    if name.split(".")[0].upper() in _RESERVED_NAMES:
+        name = "_" + name
+    return name
+
+
+def _name_tmpl(name):
+    """The output-template stem: the video's title, or a fixed name. A fixed
+    name is literal text, so a "%" in a title must not read as a field."""
+    return name.replace("%", "%%") if name else "%(title)s"
+
+
 class Downloader:
     def __init__(self, ffmpeg_path="ffmpeg", cookies=None, deno=None):
         self.ffmpeg_path = ffmpeg_path
@@ -462,6 +558,58 @@ class Downloader:
             raise PlaylistError("Empty playlist.")
 
         return info
+
+    def get_playlist(self, url):
+        """Title and videos of a playlist, without resolving any video.
+
+        A flat extraction reads only the playlist pages, so a 200-video list
+        comes back in a couple of seconds instead of 200 player requests. The
+        session goes first when there is one, because a private or unlisted
+        playlist only exists for its owner; then anonymously, so an expired
+        session costs a retry rather than the list.
+        """
+        opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'socket_timeout': 15,
+            'retries': 1,
+            'extractor_retries': 1,
+            'extract_flat': 'in_playlist',
+            'noplaylist': False,
+        }
+        rungs = [False]
+        if self.cookies and os.path.exists(self.cookies):
+            rungs.insert(0, True)
+        info = last_err = None
+        for use_cookies in rungs:
+            opts.pop('cookiefile', None)
+            if use_cookies:
+                self._apply_cookies_file_only(opts)
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                break
+            except yt_dlp.utils.DownloadError as e:
+                last_err = last_err or e
+            except Exception as e:
+                raise DownloadError(f"Unexpected error: {e}\n\n{traceback.format_exc()}") from e
+        if info is None:
+            if looks_like_auth_error(last_err):
+                raise AuthRequired(
+                    "YouTube wants to confirm you are signed in before it shows "
+                    "this playlist."
+                ) from last_err
+            raise DownloadError(f"YouTube error: {last_err}") from last_err
+
+        entries = playlist_entries(info)
+        if not entries:
+            raise PlaylistError("That playlist has no videos Y2obi can open.")
+        return {
+            "id": info.get("id") or "",
+            "title": info.get("title") or "Playlist",
+            "channel": info.get("channel") or info.get("uploader") or "",
+            "entries": entries,
+        }
 
     def _ffmpeg_dir(self):
         loc = self.ffmpeg_path
@@ -574,9 +722,9 @@ class Downloader:
             ) from last_err
         raise DownloadError(f"YouTube download error: {last_err}") from last_err
 
-    def download_mp4(self, url, output_dir, quality="Best", clip=None):
+    def download_mp4(self, url, output_dir, quality="Best", clip=None, name=None):
         qlabel = f" [{quality}]" if quality != "Best" else ""
-        template = os.path.join(output_dir, f"%(title)s{qlabel}{clip_label(clip)}.%(ext)s")
+        template = os.path.join(output_dir, f"{_name_tmpl(name)}{qlabel}{clip_label(clip)}.%(ext)s")
         max_h, _ = QUALITY_MAP.get(quality, (None, None))
         fmt_sort = [f"height:{max_h}", "ext", "vcodec", "acodec"] if max_h else ["res", "ext", "vcodec", "acodec"]
         return self._run_download(url, template, {
@@ -586,17 +734,17 @@ class Downloader:
             **self._clip_opts(clip),
         })
 
-    def download_webm(self, url, output_dir, quality="Best", clip=None):
+    def download_webm(self, url, output_dir, quality="Best", clip=None, name=None):
         qlabel = f" [{quality}]" if quality != "Best" else ""
-        template = os.path.join(output_dir, f"%(title)s{qlabel}{clip_label(clip)}.%(ext)s")
+        template = os.path.join(output_dir, f"{_name_tmpl(name)}{qlabel}{clip_label(clip)}.%(ext)s")
         return self._run_download(url, template, {
             'format': QUALITY_MAP_WEBM.get(quality, QUALITY_MAP_WEBM["Best"]),
             'merge_output_format': 'webm',
             **self._clip_opts(clip),
         })
 
-    def download_mp3(self, url, output_dir, clip=None):
-        template = os.path.join(output_dir, f"%(title)s{clip_label(clip)}.%(ext)s")
+    def download_mp3(self, url, output_dir, clip=None, name=None):
+        template = os.path.join(output_dir, f"{_name_tmpl(name)}{clip_label(clip)}.%(ext)s")
         return self._run_download(url, template, {
             'format': AUDIO_FORMAT,
             'format_sort': AUDIO_SORT,

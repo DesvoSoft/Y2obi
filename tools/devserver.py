@@ -38,6 +38,10 @@ import app.server as server  # noqa: E402  (must follow the env setup)
 from flask import Response  # noqa: E402
 
 server._static_dir = os.path.join(ROOT, "desktop")
+# The real app resolves ffmpeg before starting the server; without this every
+# merge or mp3 conversion here fails with "ffprobe and ffmpeg not found".
+from app.binaries import _get_bundled_ffmpeg  # noqa: E402
+server._ffmpeg_path = _get_bundled_ffmpeg() or "ffmpeg"
 
 # Mark the sandbox as already onboarded, otherwise the welcome modal covers
 # every state you are trying to look at. /shot/<theme>/onboarding shows it.

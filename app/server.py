@@ -17,8 +17,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.downloader import (Downloader, DownloadError, AuthRequired,
                             StreamsUnavailable, PlaylistError,
                             export_cookies_from_browser, installed_browsers,
-                            _parse_formats)
+                            _parse_formats, QUALITY_MAP)
 from app.downloader import has_session_cookies, parse_clip, ClipError
+from app.downloader import playlist_ref, is_mix, is_video_id, safe_filename
 from app import cleanup
 from app import converter
 from app import transcriber
@@ -155,11 +156,69 @@ def static_files(filename):
     return send_from_directory(os.path.join(_static_dir, "static"), filename)
 
 
+def _fmt_duration(dur):
+    if not dur:
+        return ""
+    h, r = divmod(int(dur), 3600)
+    m, s = divmod(r, 60)
+    return (f"{h}h " if h else "") + f"{m}m {s:02d}s"
+
+
+def _playlist_url(list_id):
+    return f"https://www.youtube.com/playlist?list={list_id}"
+
+
+def _playlist_response(url):
+    """The JSON for a listed playlist, or the same error shapes analyze uses."""
+    try:
+        try:
+            pl = _make_dl().get_playlist(url)
+        except BLOCKED:
+            if not _refresh_cookies():
+                raise
+            pl = _make_dl().get_playlist(url)
+    except BLOCKED as e:
+        return jsonify({"error": str(e), "needs_cookies": True,
+                        "browsers": installed_browsers()}), 400
+    except DownloadError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    entries = pl["entries"]
+    first = next((e for e in entries if e["available"]), entries[0])
+    return jsonify({
+        "kind": "playlist",
+        "id": pl["id"],
+        "title": pl["title"],
+        "channel": pl["channel"],
+        "count": len(entries),
+        "duration": _fmt_duration(sum(e["duration"] or 0 for e in entries)),
+        # i.ytimg.com serves these by id, so there is no need to carry
+        # yt-dlp's signed thumbnail URLs for every row.
+        "thumbnail": f"https://i.ytimg.com/vi/{first['id']}/hqdefault.jpg",
+        "entries": entries,
+    })
+
+
+@app.route("/api/playlist", methods=["POST"])
+def playlist():
+    """List a playlist by id: the "load the whole playlist" button on a video
+    whose URL carried &list=."""
+    list_id = str((request.json or {}).get("list_id", "")).strip()
+    if not list_id or playlist_ref(_playlist_url(list_id))[0] != list_id:
+        return jsonify({"error": "Playlist id required"}), 400
+    return _playlist_response(_playlist_url(list_id))
+
+
 @app.route("/api/analyze", methods=["POST"])
 def analyze():
     url = (request.json or {}).get("url", "").strip()
     if not url:
         return jsonify({"error": "URL required"}), 400
+    list_id, has_video = playlist_ref(url)
+    if list_id and not has_video:
+        return _playlist_response(_playlist_url(list_id))
     try:
         try:
             info = _make_dl().get_info(url)
@@ -169,8 +228,10 @@ def analyze():
             if not _refresh_cookies():
                 raise
             info = _make_dl().get_info(url)
-    except PlaylistError as e:
-        return jsonify({"error": str(e), "playlist": True}), 400
+    except PlaylistError:
+        # yt-dlp saw a list where the URL named none we recognise: a channel's
+        # Videos tab, say. That is still a list of videos.
+        return _playlist_response(url)
     except BLOCKED as e:
         # The page turns this into one-click buttons for the browsers actually
         # installed, rather than sending the user hunting through settings.
@@ -181,12 +242,7 @@ def analyze():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-    dur = info.get("duration", 0)
-    dstr = ""
-    if dur:
-        h, r = divmod(int(dur), 3600)
-        m, s = divmod(r, 60)
-        dstr = (f"{h}h " if h else "") + f"{m}m {s:02d}s"
+    dstr = _fmt_duration(info.get("duration", 0))
 
     thumb = info.get("thumbnail", "")
     thumbnails = info.get("thumbnails") or []
@@ -207,6 +263,9 @@ def analyze():
         "thumbnail": thumb,
         "qualities": qualities,
         "has_audio": has_audio,
+        # A watch link that carries &list= is still that one video; the page
+        # offers the list beside it rather than deciding for the user.
+        "list_id": list_id if list_id and not is_mix(list_id) else None,
     })
 
 
@@ -415,7 +474,7 @@ def transcribe_models():
         "models": [_model_entry(n, partials) for n in transcriber.MODELS],
         "default": _config().get("model") or transcriber.DEFAULT_MODEL,
         "lang": _config().get("lang") or "auto",
-        "ts_interval": _ts_interval(),
+        **_transcript_opts(),
         "dir": MODELS_DIR,
         "downloading": running,
         # Asked of whisper itself, not guessed from the hardware — see
@@ -581,13 +640,25 @@ def _ts_interval():
     return value if value in transcriber.TS_INTERVALS else 0
 
 
+def _transcript_opts():
+    """How the transcript files are written, read once when a job starts so a
+    setting changed mid-playlist does not leave half the files one way."""
+    cfg = _config()
+    return {
+        "ts_interval": _ts_interval(),
+        # On unless turned off: every build before this one wrote the .srt.
+        "srt": cfg.get("srt", True) is not False,
+        "ts_ranges": bool(cfg.get("ts_ranges", False)),
+    }
+
+
 @app.route("/api/config", methods=["GET"])
 def get_config():
     cfg = _config()
     return jsonify({
         "model": cfg.get("model") or transcriber.DEFAULT_MODEL,
         "lang": cfg.get("lang") or "auto",
-        "ts_interval": _ts_interval(),
+        **_transcript_opts(),
         "device": _device(),
         "gpu_index": _gpu_index(),
         "onboarded": bool(cfg.get("onboarded")),
@@ -623,6 +694,11 @@ def set_config():
             return jsonify({"ok": False,
                             "reason": f"Unsupported timestamp interval: {ts}"}), 400
         cfg["ts_interval"] = ts
+    for key in ("srt", "ts_ranges"):
+        if key in data:
+            if not isinstance(data[key], bool):
+                return jsonify({"ok": False, "reason": f"{key} must be true or false"}), 400
+            cfg[key] = data[key]
     if "device" in data:
         device = str(data["device"]).strip().lower()
         if device not in ("cpu", "gpu"):
@@ -680,9 +756,99 @@ def _set(task_id, **kw):
             t.update(kw)
 
 
-def _run_transcribe(task_id, src, model, lang, is_file=False, ts_interval=0,
+def _fetch_audio(task_id, url, tmp_dir, clip, cancel, report, say):
+    """Download the audio of `url` into `tmp_dir`, ready for whisper."""
+    say("Downloading audio...")
+    return _with_downloader(task_id, cancel, report, lambda _msg: say("Downloading audio..."),
+                            say, lambda dl: dl.download_audio_raw(url, tmp_dir, clip))
+
+
+def _with_downloader(task_id, cancel, report, on_status, say, run):
+    """Run `run(downloader)` with progress, cancel and a fresh session wired in.
+
+    Retries once on a refreshed session, same as a plain download: the browser
+    the user approved has probably just expired.
+    """
+    def attempt():
+        dl = _make_dl()
+        _set(task_id, _dl=dl)
+
+        def on_progress(pct, speed, eta):
+            # A Downloader clears its own cancel flag when a download starts, so
+            # a Cancel landing between two videos of a playlist would be lost
+            # without re-applying it here.
+            if cancel.is_set():
+                dl.cancel()
+            report(pct, eta)
+            _set(task_id, speed=speed)
+
+        dl.set_callbacks(progress=on_progress, status=on_status)
+        if cancel.is_set():
+            raise transcriber.Cancelled()
+        return run(dl)
+
+    try:
+        try:
+            return attempt()
+        except BLOCKED:
+            if cancel.is_set() or not _refresh_cookies():
+                raise
+            say("Reconnecting to YouTube...")
+            return attempt()
+    finally:
+        _set(task_id, _dl=None, speed=0)
+
+
+def _download_item(task_id, url, out_dir, name, fmt, quality, cancel, report, say):
+    """One video of a playlist download, saved as `name` in `out_dir`."""
+    def on_status(msg):
+        # The batch does its own skip-if-present check and reports it per row.
+        if msg != "__already_exists__":
+            say(msg)
+
+    def run(dl):
+        if fmt == "mp4":
+            return dl.download_mp4(url, out_dir, quality, name=name)
+        if fmt == "webm":
+            return dl.download_webm(url, out_dir, quality, name=name)
+        return dl.download_mp3(url, out_dir, name=name)
+
+    say("Downloading...")
+    return _with_downloader(task_id, cancel, report, on_status, say, run)
+
+
+def _transcribe_audio(tr, cancel, audio_path, model_path, out_prefix, lang, opts,
+                      report, say, gpu):
+    """Whisper over one audio file. `gpu` is {"use": bool}, shared across a
+    playlist so a GPU that failed once is not retried on every video."""
+    started = [time.time()]
+
+    def on_text_pct(p):
+        elapsed = time.time() - started[0]
+        eta = int(elapsed * (100.0 - p) / p) if p > 1 else 0
+        report(p, eta)
+
+    say("Transcribing...")
+    kw = dict(lang=lang or "auto", progress_cb=on_text_pct, status_cb=say, **opts)
+    if not gpu["use"]:
+        return tr.transcribe(audio_path, model_path, out_prefix, use_gpu=False, **kw)
+    try:
+        return tr.transcribe(audio_path, model_path, out_prefix,
+                             use_gpu=True, gpu_index=_gpu_index(), **kw)
+    except Exception as e:
+        # A GPU that initialises but then fails mid-run (old driver, VRAM
+        # pressure) must not cost the user the whole job.
+        if "Cancelled" in str(e) or cancel.is_set():
+            raise
+        gpu["use"] = False
+        say("GPU failed — retrying on CPU...")
+        started[0] = time.time()
+        return tr.transcribe(audio_path, model_path, out_prefix, use_gpu=False, **kw)
+
+
+def _run_transcribe(task_id, src, model, lang, is_file=False, opts=None,
                     clip=None):
-    """Run whisper over `src` and write .txt + .srt to DOWNLOAD_DIR.
+    """Run whisper over `src` and write .txt (+ .srt) to DOWNLOAD_DIR.
 
     `src` is a YouTube URL, or a local path when `is_file` — a local file needs
     no download, so that phase drops out of the progress split entirely.
@@ -723,52 +889,22 @@ def _run_transcribe(task_id, src, model, lang, is_file=False, ts_interval=0,
         if cancel.is_set():
             raise transcriber.Cancelled()
 
+        say = lambda m: _set(task_id, status=m)  # noqa: E731
         if is_file:
             # ffmpeg reads the user's file directly; Transcriber.to_wav does the
             # decode, so there is nothing to fetch and nothing to clean up.
             audio_path = src
         else:
-            _set(task_id, status="Downloading audio...")
-            dl = _make_dl()
-            _set(task_id, _dl=dl)
-            dl.set_callbacks(
-                progress=lambda pct, speed, eta: (
-                    report("audio", pct, eta), _set(task_id, speed=speed)
-                ),
-                status=lambda msg: _set(task_id, status="Downloading audio..."),
-            )
-            audio_path = dl.download_audio_raw(src, tmp_dir, clip)
-            _set(task_id, _dl=None, speed=0)
+            audio_path = _fetch_audio(task_id, src, tmp_dir, clip, cancel,
+                                      lambda pct, eta: report("audio", pct, eta), say)
         if cancel.is_set():
             raise transcriber.Cancelled()
 
         stem = os.path.splitext(os.path.basename(audio_path))[0]
         out_prefix = os.path.join(DOWNLOAD_DIR, stem)
-
-        started = time.time()
-
-        def on_text_pct(p):
-            elapsed = time.time() - started
-            eta = int(elapsed * (100.0 - p) / p) if p > 1 else 0
-            report("text", p, eta)
-
-        _set(task_id, status="Transcribing...")
-        want_gpu = _device() == "gpu"
-        kw = dict(lang=lang or "auto", progress_cb=on_text_pct,
-                  ts_interval=ts_interval,
-                  status_cb=lambda m: _set(task_id, status=m))
-        try:
-            files = tr.transcribe(audio_path, model_path, out_prefix,
-                                  use_gpu=want_gpu, gpu_index=_gpu_index(), **kw)
-        except Exception as e:
-            # A GPU that initialises but then fails mid-run (old driver, VRAM
-            # pressure) must not cost the user the whole job.
-            if not want_gpu or "Cancelled" in str(e) or cancel.is_set():
-                raise
-            _set(task_id, status="GPU failed — retrying on CPU...")
-            started = time.time()
-            files = tr.transcribe(audio_path, model_path, out_prefix,
-                                  use_gpu=False, **kw)
+        files = _transcribe_audio(tr, cancel, audio_path, model_path, out_prefix,
+                                  lang, opts or {}, lambda p, eta: report("text", p, eta),
+                                  say, {"use": _device() == "gpu"})
         _set(task_id, path=files[0], extra_files=files[1:], done=True, percent=100,
              eta=0, status="Complete", _done_at=time.time())
     except Exception as e:
@@ -782,6 +918,242 @@ def _run_transcribe(task_id, src, model, lang, is_file=False, ts_interval=0,
     finally:
         _set(task_id, _tr=None, _dl=None)
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# A playlist can run to thousands of videos, which is fine; past this a broken
+# client is likelier than a real request.
+BATCH_MAX = 5000
+
+
+def _short_error(e):
+    """First line of an error, capped. yt-dlp's are walls of text, and a list of
+    forty failures needs one line each, not forty tracebacks."""
+    line = (str(e).strip().splitlines() or [""])[0]
+    return line[:300] or e.__class__.__name__
+
+
+# What a finished download of each format leaves behind. mkv is where yt-dlp
+# lands when the streams it picked cannot be merged into the asked container.
+_BATCH_EXTS = {"txt": (".txt",), "mp3": (".mp3",), "mp4": (".mp4", ".mkv"),
+               "webm": (".webm", ".mkv")}
+
+
+def _batch_name(stem, fmt, quality):
+    """The file name a playlist item is saved under, without its extension.
+    Same rule as a single download: a capped quality is part of the name."""
+    if fmt in ("mp4", "webm") and quality != "Best":
+        return f"{stem} [{quality}]"
+    return stem
+
+
+def _run_batch(task_id, items, out_dir, model, lang, opts, fmt="txt", quality="Best"):
+    """Work through a playlist selection one video at a time, into `out_dir`.
+
+    `fmt` is "txt" to transcribe, or mp4/webm/mp3 to download. One video
+    failing must not cost the rest: it is marked and the queue moves on. A
+    video whose file is already there is skipped, so running the same playlist
+    again picks up where a cancelled or failed run stopped.
+    """
+    transcribing = fmt == "txt"
+    if not transcriber.MODELS.get(model):
+        model = transcriber.DEFAULT_MODEL
+
+    cancel = threading.Event()
+    tr = transcriber.Transcriber(get_whisper_cli(), _ffmpeg_path, MODELS_DIR,
+                                 cancel_event=cancel)
+    _set(task_id, _tr=tr)
+    n = len(items)
+    # The model download happens once ever, so it gets a slice of the bar only
+    # when it is actually needed. The Transcriber is made for a download batch
+    # too: its event is what the Cancel route sets.
+    lo = 0 if not transcribing or tr.has_model(model) else 10
+    clock = {"start": None, "skipped": 0}
+
+    def overall(i, frac):
+        """Bar position with `i` videos finished and `frac` of the next one."""
+        pos = (i + frac) / n
+        eta = 0
+        worked = (i + frac - clock["skipped"]) / n
+        if clock["start"] and worked > 0.01:
+            eta = int((time.time() - clock["start"]) * (1 - pos) / worked)
+        _set(task_id, percent=lo + (100 - lo) * pos, eta=eta)
+
+    def mark(i, **kw):
+        with _lock:
+            t = tasks.get(task_id)
+            if t:
+                t["batch"][i].update(kw)
+                # Lets /api/progress leave the per-video list out of every poll
+                # in which nothing in it changed -- see progress().
+                t["batch_rev"] = t.get("batch_rev", 0) + 1
+
+    counts = {"done": 0, "skipped": 0, "error": 0}
+    verb = "transcribed" if transcribing else "downloaded"
+
+    def summary():
+        # "0 transcribed" only says something when nothing else happened.
+        bits = [f"{counts['done']} {verb}"] if counts["done"] or not counts["skipped"] else []
+        if counts["skipped"]:
+            bits.append(f"{counts['skipped']} already there, skipped")
+        if counts["error"]:
+            bits.append(f"{counts['error']} failed")
+        return " · ".join(bits)
+
+    gpu = {"use": _device() == "gpu"}
+    try:
+        model_path = None
+        if transcribing:
+            with _model_lock(model):
+                model_path = tr.ensure_model(
+                    model,
+                    progress_cb=lambda p: _set(task_id, percent=lo * p / 100.0),
+                    status_cb=lambda m: _set(task_id, status=m),
+                )
+        os.makedirs(out_dir, exist_ok=True)
+        clock["start"] = time.time()
+
+        for i, item in enumerate(items):
+            if cancel.is_set():
+                raise transcriber.Cancelled()
+            tag = f"Video {i + 1} of {n}"
+            say = lambda m, _t=tag: _set(task_id, status=f"{_t} · {m}")  # noqa: E731
+            _set(task_id, index=i)
+            prefix = os.path.join(out_dir, _batch_name(item["stem"], fmt, quality))
+            if any(os.path.exists(prefix + ext) for ext in _BATCH_EXTS[fmt]):
+                mark(i, state="skipped")
+                counts["skipped"] += 1
+                clock["skipped"] += 1
+                overall(i + 1, 0)
+                continue
+
+            mark(i, state="running")
+            url = f"https://www.youtube.com/watch?v={item['id']}"
+            tmp_dir = tempfile.mkdtemp(prefix="y2obi_src_")
+            try:
+                if not transcribing:
+                    _download_item(task_id, url, out_dir, item["stem"], fmt, quality,
+                                   cancel, lambda pct, _eta, _i=i: overall(_i, pct / 100.0),
+                                   say)
+                else:
+                    # Downloading audio is a small part of a video's time next
+                    # to whisper, so it gets a tenth of that video's share.
+                    audio = _fetch_audio(
+                        task_id, url, tmp_dir,
+                        None, cancel, lambda pct, _eta, _i=i: overall(_i, 0.1 * pct / 100.0),
+                        say)
+                    if cancel.is_set():
+                        raise transcriber.Cancelled()
+                    _transcribe_audio(
+                        tr, cancel, audio, model_path, prefix, lang, opts,
+                        lambda p, _eta, _i=i: overall(_i, 0.1 + 0.9 * p / 100.0), say, gpu)
+                mark(i, state="done")
+                counts["done"] += 1
+            except Exception as e:
+                if cancel.is_set() or "Cancelled" in str(e):
+                    mark(i, state="pending")
+                    raise transcriber.Cancelled()
+                mark(i, state="error", error=_short_error(e))
+                counts["error"] += 1
+                if isinstance(e, BLOCKED):
+                    _set(task_id, needs_cookies=True)
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            overall(i + 1, 0)
+
+        # Nothing at all came out: that is an error, not a summary of zeros.
+        first = None
+        if not counts["done"] and not counts["skipped"]:
+            with _lock:
+                first = next((t["error"] for t in tasks.get(task_id, {}).get("batch", [])
+                              if t.get("error")), None)
+        _set(task_id, path=out_dir, done=True, percent=100, eta=0,
+             status=summary(), error=first, _done_at=time.time())
+    except Exception as e:
+        if "Cancelled" in str(e):
+            _set(task_id, path=out_dir if os.path.isdir(out_dir) else None,
+                 cancelled=True, status="Cancelled · " + summary(), done=True,
+                 _done_at=time.time())
+        else:
+            _set(task_id, error=str(e), status="Error", done=True,
+                 _done_at=time.time())
+    finally:
+        _set(task_id, _tr=None, _dl=None)
+
+
+@app.route("/api/batch", methods=["POST"])
+def start_batch():
+    """Queue the chosen videos of a playlist: transcribe or download them.
+
+    Only video ids come from the page, never URLs: every one is rebuilt here
+    as a youtube.com watch link, so this cannot be pointed anywhere else.
+    """
+    data = request.json or {}
+    raw = data.get("items")
+    if not isinstance(raw, list) or not raw:
+        return jsonify({"error": "Pick at least one video"}), 400
+    if len(raw) > BATCH_MAX:
+        return jsonify({"error": f"At most {BATCH_MAX} videos at a time"}), 400
+    fmt = data.get("format", "txt")
+    if fmt not in _BATCH_EXTS:
+        return jsonify({"error": f"Unknown format: {fmt}"}), 400
+    quality = data.get("quality", "Best")
+    if quality not in QUALITY_MAP:
+        return jsonify({"error": f"Unknown quality: {quality}"}), 400
+    if fmt == "txt" and not get_whisper_cli():
+        return jsonify({"error": "Transcription engine not available in this build"}), 400
+
+    items, seen = [], set()
+    for it in raw:
+        if not isinstance(it, dict) or not is_video_id(it.get("id")):
+            return jsonify({"error": "Not a YouTube video id"}), 400
+        if it["id"] in seen:
+            continue
+        seen.add(it["id"])
+        try:
+            index = max(1, int(it.get("index") or 0))
+        except (TypeError, ValueError):
+            index = 0
+        items.append({"id": it["id"], "title": str(it.get("title") or it["id"])[:300],
+                      "index": index or len(items) + 1})
+
+    # Numbered by position in the playlist, padded to the playlist's length
+    # rather than the selection's, so the name of a video does not depend on
+    # which others were picked with it -- the skip-if-done check relies on that.
+    try:
+        total = int(data.get("total") or 0)
+    except (TypeError, ValueError):
+        total = 0
+    width = max(2, len(str(max([total] + [it["index"] for it in items]))))
+    for it in items:
+        it["stem"] = f"{it['index']:0{width}d} - {safe_filename(it['title'], it['id'])}"
+
+    out_dir = os.path.join(DOWNLOAD_DIR, safe_filename(data.get("playlist_title"), "Playlist"))
+    task_id = uuid.uuid4().hex
+    with _lock:
+        _reap_tasks()
+        busy = _active_job()
+        if busy:
+            return jsonify({
+                "error": "Another job is already running. Wait for it to finish, "
+                         "or cancel it first.",
+                "busy_task_id": busy,
+            }), 409
+        tasks[task_id] = {
+            "percent": 0, "speed": 0, "eta": 0, "rate": None,
+            "status": "Starting...", "done": False,
+            "cancelled": False, "path": None, "kind": "media",
+            "_dl": None, "_tr": None, "_cv": None,
+            "index": 0,
+            "batch": [{"id": it["id"], "state": "pending", "error": None} for it in items],
+        }
+    threading.Thread(
+        target=_run_batch,
+        args=(task_id, items, out_dir,
+              data.get("model") or transcriber.DEFAULT_MODEL,
+              data.get("lang") or "auto", _transcript_opts(), fmt, quality),
+        daemon=True,
+    ).start()
+    return jsonify({"task_id": task_id, "folder": out_dir})
 
 
 def _run_convert(task_id, path, fmt, height):
@@ -906,7 +1278,7 @@ def start_download():
             target=_run_transcribe,
             args=(task_id, path if is_file else url,
                   data.get("model") or transcriber.DEFAULT_MODEL,
-                  data.get("lang") or "auto", is_file, _ts_interval(), clip),
+                  data.get("lang") or "auto", is_file, _transcript_opts(), clip),
             daemon=True,
         ).start()
         return jsonify({"task_id": task_id})
@@ -974,9 +1346,25 @@ def progress(task_id):
         "error": task.get("error"),
         "already_exists": task.get("already_exists", False),
     }
-    if task.get("needs_cookies"):
+    # Only once done: a playlist marks this on its first blocked video and keeps
+    # going, and listing browsers spawns tasklist, which no 500 ms poll should.
+    if task.get("needs_cookies") and task["done"]:
         resp["needs_cookies"] = True
         resp["browsers"] = installed_browsers()
+    if "batch" in task:
+        # The per-video list is the only part of a poll that grows with the
+        # playlist. The page sends back the revision it already has, and the
+        # list is left out until something in it actually changes.
+        rev = task.get("batch_rev", 0)
+        resp["batch"] = {"index": task.get("index", 0), "rev": rev}
+        if request.args.get("rev") != str(rev):
+            with _lock:
+                resp["batch"]["items"] = [{"state": b["state"], "error": b["error"]}
+                                          for b in task["batch"]]
+        # Partial results are still results: a cancelled or half-failed
+        # playlist has a folder worth opening.
+        if task.get("path"):
+            resp["folder"] = task["path"]
     if task["done"] and task.get("path") and not task.get("error") and not task["cancelled"]:
         resp["file_url"] = f"/api/file/{task_id}"
         resp["filename"] = os.path.basename(task["path"])

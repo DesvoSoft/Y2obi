@@ -58,12 +58,14 @@ Getting past the warning:
 - YouTube video in MP4 or WebM, up to 4K
 - MP3 audio at 320 kbps
 - Quality selector: Best / 2160p / 1440p / 1080p / 720p / 480p / 360p
+- Whole playlists: paste a playlist link (or load the list from a video that has one), tick the videos you want, and they are downloaded or transcribed one after another into `Downloads/Y2obi/<playlist>/`, numbered in playlist order. A failed video does not stop the rest, and running the same playlist again skips what is already there
 - Progress with speed and ETA, and it skips files you already downloaded
-- A URL with `&list=...` (mix, radio, autoplay) downloads that one video, not the playlist
+- A video URL with `&list=...` stays that one video; a button offers the whole playlist (mixes excepted)
 - Optional cookies for age-restricted or private videos
 
 **Transcribing**
-- Any video or audio to `.txt` plus a timestamped `.srt`
+- Any video or audio to `.txt`, with an optional timestamped `.srt`
+- Optional timestamps in the `.txt` every 30 s to 10 min, as a point (`[00:01:00]`) or a range (`[00:01:00 - 00:02:00]`)
 - Runs entirely on your machine. No API key, no account, nothing uploaded
 - Uses your GPU through Vulkan (NVIDIA, AMD, Intel) and falls back to the CPU on its own
 - Six model sizes to choose from, downloaded only when you ask for one

@@ -293,6 +293,55 @@
   .info-body .channel { font-size: 13px; color: var(--vitra-color-text-secondary); font-weight: 600; }
   .info-body .meta    { font-size: 12.5px; color: var(--faint); }
 
+  .list-offer { align-self: flex-start; margin-top: 4px; }
+
+  /* --- playlist ---------------------------------------------------------- */
+  .pl-card { display: none; overflow: hidden; }
+  .pl-card.visible { display: block; }
+  .pl-head {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 14px; border-bottom: 1px solid var(--card-bd);
+  }
+  .pl-head .clip-toggle { color: var(--vitra-color-text-primary); font-weight: 600; }
+  .pl-total { font-size: 12px; color: var(--faint); }
+  .pl-filter {
+    margin-left: auto; width: 190px; height: 30px; padding: 0 10px; border-radius: 8px;
+    background: var(--field-bg); color: var(--vitra-color-text-primary);
+    border: 1px solid var(--card-bd); font-size: 12.5px; outline: none;
+  }
+  .pl-filter:focus { border-color: var(--vitra-color-accent); }
+  .pl-filter::placeholder { color: var(--faint); }
+  .pl-list { max-height: 296px; overflow-y: auto; padding: 4px 6px 6px; }
+  .pl-row {
+    display: grid; grid-template-columns: auto 28px 64px minmax(0, 1fr) auto 18px;
+    gap: 10px; align-items: center; padding: 5px 8px; border-radius: 9px;
+    cursor: pointer; font-size: 13px; user-select: none;
+  }
+  .pl-row:hover { background: var(--card-bg); }
+  .pl-row input { margin: 0; accent-color: var(--vitra-color-accent); }
+  .pl-idx { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; text-align: right; }
+  .pl-thumb { width: 64px; height: 36px; border-radius: 5px; object-fit: cover; display: block; background: var(--field-bg); }
+  .pl-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .pl-row.off .pl-title { color: var(--faint); }
+  .pl-row.gone { cursor: default; opacity: .5; }
+  .pl-dur { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .pl-state { width: 18px; height: 18px; display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 800; }
+  .pl-err { grid-column: 4 / -1; font-size: 11.5px; color: var(--bad-fg); line-height: 1.4; margin-top: -3px; }
+  .pl-row.s-running { background: color-mix(in srgb, var(--vitra-color-accent) 11%, transparent); }
+  .pl-row.s-done .pl-state { color: var(--ok-fg); }
+  .pl-row.s-error .pl-state { color: var(--bad-fg); }
+  .pl-row.s-skipped .pl-state { color: var(--faint); }
+  .pl-list.locked .pl-row { cursor: default; }
+  .pl-empty { padding: 14px; font-size: 12.5px; color: var(--faint); text-align: center; }
+  @keyframes pl-spin { to { transform: rotate(360deg); } }
+  .pl-spin {
+    width: 13px; height: 13px; border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--vitra-color-accent) 30%, transparent);
+    border-top-color: var(--vitra-color-accent); animation: pl-spin .8s linear infinite;
+  }
+  .ts-set { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
   /* --- options ---------------------------------------------------------- */
   .options { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
   .opt-row { display: grid; grid-template-columns: 84px 1fr; gap: 14px; align-items: center; }
@@ -374,6 +423,11 @@
   /* --- progress --------------------------------------------------------- */
   .progress-card { display: none; padding: 12px 16px 14px; }
   .progress-card.visible { display: block; }
+  /* Which job this bar belongs to. Another link can be analyzed while it runs,
+     and then the card above is no longer the thing being downloaded. */
+  .job-title { font-size: 12.5px; font-weight: 700; color: var(--vitra-color-text-secondary);
+    margin-bottom: 8px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .job-title:empty { display: none; }
   .progress-card .vitra-progress-value { color: var(--vitra-color-text-primary); font-weight: 700; }
   .progress-stats { display: flex; margin-top: 6px; font-size: 12.5px; align-items: center; gap: 10px; }
   .progress-stats .status { flex: 1; color: var(--vitra-color-text-secondary); }
@@ -561,6 +615,10 @@
        more vertical room than the whole options panel at the minimum size. */
     .thumb-wrap { width: 128px; height: 72px; }
     .info-body .title { font-size: 15px; }
+    .pl-row { grid-template-columns: auto 26px minmax(0, 1fr) auto 18px; }
+    .pl-thumb { display: none; }
+    .pl-err { grid-column: 3 / -1; }
+    .pl-filter { margin-left: 0; width: 100%; }
   }
 </style>
 </head>
@@ -605,7 +663,7 @@
   </div>
 
   <div class="url-row" id="urlRow">
-    <input id="urlInput" type="text" placeholder="Paste a YouTube URL..." autofocus>
+    <input id="urlInput" type="text" placeholder="Paste a YouTube video or playlist URL..." autofocus>
     <button class="analyze-btn" id="analyzeBtn">Analyze</button>
   </div>
 
@@ -629,8 +687,21 @@
         <div class="title"   id="titleText">No video analyzed</div>
         <div class="channel" id="channelText"></div>
         <div class="meta"    id="metaText"></div>
+        <button type="button" class="mini-btn list-offer" id="loadListBtn" hidden>Load the whole playlist</button>
       </div>
     </div>
+  </div>
+
+  <div id="playlistCard" class="panel pl-card">
+    <div class="pl-head">
+      <label class="clip-toggle">
+        <input type="checkbox" id="plAll" aria-label="Select all"> <span id="plCount">0 selected</span>
+      </label>
+      <span class="pl-total" id="plTotal"></span>
+      <input class="pl-filter" id="plFilter" type="search" placeholder="Filter videos..."
+             aria-label="Filter videos" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="pl-list" id="plList" role="list"></div>
   </div>
 
   <div class="panel options">
@@ -682,9 +753,20 @@
       <div class="chip-set" id="langChips" role="radiogroup" aria-label="Language"></div>
     </div>
 
+    <div class="opt-row hidden" id="outRow">
+      <span class="opt-label">Files</span>
+      <div class="chip-set" id="outChips" role="radiogroup" aria-label="Files"></div>
+    </div>
+
     <div class="opt-row hidden" id="tsRow">
       <span class="opt-label">Timestamps</span>
-      <div class="chip-set" id="tsChips" role="radiogroup" aria-label="Timestamps"></div>
+      <div class="ts-set">
+        <div class="chip-set" id="tsChips" role="radiogroup" aria-label="Timestamps"></div>
+        <label class="clip-toggle" id="tsRangeWrap">
+          <input type="checkbox" id="tsRange"> As ranges
+        </label>
+        <span class="clip-note" id="tsExample"></span>
+      </div>
       <div class="opt-note" id="transcriptHint"></div>
     </div>
   </div>
@@ -695,6 +777,7 @@
   </div>
 
   <div id="progressCard" class="panel progress-card">
+    <div class="job-title" id="jobTitle"></div>
     <div class="vitra-progress-container">
       <div class="vitra-progress vitra-progress-lg">
         <div class="vitra-progress-bar" id="barFill" style="width:0%"></div>
@@ -800,6 +883,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const TS_ROW       = $('tsRow');
   const TS_CHIPS     = $('tsChips');
   const TRANSCRIPT_HINT = $('transcriptHint');
+  const OUT_ROW      = $('outRow');
+  const OUT_CHIPS    = $('outChips');
+  const TS_RANGE     = $('tsRange');
+  const TS_RANGE_WRAP= $('tsRangeWrap');
+  const TS_EXAMPLE   = $('tsExample');
+  const LOAD_LIST_BTN= $('loadListBtn');
+  const PL_CARD      = $('playlistCard');
+  const PL_ALL       = $('plAll');
+  const PL_COUNT     = $('plCount');
+  const PL_TOTAL     = $('plTotal');
+  const PL_FILTER    = $('plFilter');
+  const PL_LIST      = $('plList');
   const ACTIONS_ROW  = $('actionsRow');
   const DOWNLOAD_BTN = $('downloadBtn');
   const CANCEL_BTN   = $('cancelBtn');
@@ -855,6 +950,12 @@ document.addEventListener('DOMContentLoaded', () => {
   let localFile = null;         // probe result from /api/analyze_file
   let selectedHeight = null;    // null = keep the source resolution
   let videoInfo = null, currentUrl = null, downloading = false;
+  // A listed playlist. Mutually exclusive with videoInfo: the page is either
+  // about one video or about a list of them.
+  let playlist = null;
+  let plRows = [];             // one {entry, el, box, state} per entry, in order
+  let batchRows = null;        // the plRows the running batch was started with
+  let plAnchor = null;         // last row clicked, for shift-click ranges
   let lastBrowsers = null;   // remembered so the audio warning can offer the fix
   // Three reasons to stop the drift, one switch. Minimised counts because
   // WebView2 goes on animating a window nobody can see. Defined here rather than
@@ -922,6 +1023,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function resetSelection() {
     videoInfo = null; currentUrl = null; localFile = null;
+    clearPlaylist();
     INFO_CARD.classList.remove('visible');
     PROGRESS_CARD.classList.remove('visible');
     hideError();
@@ -1021,6 +1123,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const isTxt = selectedFormat === 'txt';
     const isAudio = selectedFormat === 'mp3';
     const isFile = sourceMode === 'file';
+    const isList = !isFile && !!playlist;
     // For a local file the quality row picks a downscale, and only for mp4.
     const showQuality = isFile
       ? (selectedFormat === 'mp4' && !!(localFile && localFile.has_video))
@@ -1029,11 +1132,14 @@ document.addEventListener('DOMContentLoaded', () => {
     QUALITY_ROW.querySelector('.opt-label').textContent = isFile ? 'Resolution' : 'Quality';
     MODEL_ROW.classList.toggle('hidden', !isTxt);
     LANG_ROW.classList.toggle('hidden', !isTxt);
+    OUT_ROW.classList.toggle('hidden', !isTxt);
     TS_ROW.classList.toggle('hidden', !isTxt);
     // Local files go through Converter, which cannot take a range, so the row
-    // is not offered rather than being offered and refused.
-    CLIP_ROW.classList.toggle('hidden', isFile);
-    DOWNLOAD_BTN.textContent = isTxt ? 'Transcribe' : (isFile ? 'Convert' : 'Download');
+    // is not offered rather than being offered and refused. A playlist has no
+    // one range that would mean the same thing in every video.
+    CLIP_ROW.classList.toggle('hidden', isFile || isList);
+    if (isList) syncPlaylistCount();
+    else DOWNLOAD_BTN.textContent = isTxt ? 'Transcribe' : (isFile ? 'Convert' : 'Download');
     if (isTxt) updateTranscriptHint();
   }
 
@@ -1081,11 +1187,29 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updateTranscriptHint() {
+    syncTsExtras();
     const m = modelInfo[selectedModel];
     if (!m) { TRANSCRIPT_HINT.textContent = ''; return; }
+    const files = selectedSrt ? '.txt and .srt' : '.txt';
+    const where = playlist
+      ? ` One ${files} per video, in Downloads\\Y2obi\\${playlist.title}. Videos already transcribed there are skipped.`
+      : ` Saves ${files}.`;
     TRANSCRIPT_HINT.textContent = m.installed
-      ? 'Runs offline on your CPU. Long videos take a while — roughly a quarter of the video length. Saves .txt and .srt.'
+      ? 'Runs offline on your machine. Long videos take a while.' + where
       : `First run downloads the ${m.label.toLowerCase()} model (~${m.size_mb} MB), once. After that it works offline.`;
+  }
+
+  // The range toggle only means something when there are stamps to shape, and
+  // a sample line says what the .txt will look like better than a label can.
+  function syncTsExtras() {
+    TS_RANGE_WRAP.style.display = selectedTs ? '' : 'none';
+    TS_RANGE.checked = selectedTsRanges;
+    if (!selectedTs) { TS_EXAMPLE.textContent = ''; return; }
+    const hms = s => [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60]
+      .map(n => String(n).padStart(2, '0')).join(':');
+    TS_EXAMPLE.textContent = selectedTsRanges
+      ? `[${hms(selectedTs)} - ${hms(selectedTs * 2)}]`
+      : `[${hms(selectedTs)}]`;
   }
 
   // whisper takes any ISO code straight through, so offering more here costs
@@ -1098,9 +1222,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // stamp on every line is noise and none at all leaves no way back into the
   // video. Must stay in step with transcriber.TS_INTERVALS, which rejects
   // anything else rather than writing a file nobody asked for.
-  const TS_OPTIONS = [[0, 'None'], [60, 'Every minute'], [120, 'Every 2 min'],
-                      [300, 'Every 5 min']];
-  let selectedTs = 0;
+  const TS_OPTIONS = [[0, 'None'], [30, 'Every 30 s'], [60, 'Every minute'],
+                      [120, 'Every 2 min'], [300, 'Every 5 min'], [600, 'Every 10 min']];
+  let selectedTs = 0, selectedTsRanges = false;
+  // The .srt is what a video player loads as subtitles; plenty of people only
+  // want something to read, and a second file per video is clutter for them.
+  const OUT_OPTIONS = [[false, 'TXT only'], [true, 'TXT + SRT subtitles']];
+  let selectedSrt = true;
+
+  TS_RANGE.addEventListener('change', () => {
+    selectedTsRanges = TS_RANGE.checked;
+    saveConfig({ts_ranges: selectedTsRanges});
+    syncTsExtras();
+  });
 
   // Trimming. The times are validated in the page as well as on the server:
   // the server has to reject them anyway, but catching a typo before the job
@@ -1123,7 +1257,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function clipState() {
-    if (!CLIP_ON.checked) return {ok: true, start: '', end: ''};
+    // The row is hidden for a playlist, so a range left ticked from an earlier
+    // video must not quietly block the Transcribe button.
+    if (!CLIP_ON.checked || playlist) return {ok: true, start: '', end: ''};
     const s = parseTimecode(CLIP_START.value);
     const e = parseTimecode(CLIP_END.value);
     const bad = Number.isNaN(s) || Number.isNaN(e);
@@ -1188,10 +1324,18 @@ document.addEventListener('DOMContentLoaded', () => {
           }));
         });
         selectedTs = TS_OPTIONS.some(([v]) => v === d.ts_interval) ? d.ts_interval : 0;
+        selectedTsRanges = !!d.ts_ranges;
         TS_CHIPS.innerHTML = '';
         TS_OPTIONS.forEach(([value, name]) => {
           TS_CHIPS.appendChild(chip(name, value === selectedTs, () => {
             selectedTs = value; saveConfig({ts_interval: value});
+          }));
+        });
+        selectedSrt = d.srt !== false;
+        OUT_CHIPS.innerHTML = '';
+        OUT_OPTIONS.forEach(([value, name]) => {
+          OUT_CHIPS.appendChild(chip(name, value === selectedSrt, () => {
+            selectedSrt = value; saveConfig({srt: value});
           }));
         });
         updateTranscriptHint();
@@ -1756,14 +1900,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (pasteTimer) clearTimeout(pasteTimer);
     pasteTimer = setTimeout(onAnalyze, 150);
   });
-  // Editing the URL after analyzing must invalidate the result — otherwise
-  // Download still uses the previously analyzed currentUrl.
-  URL_INPUT.addEventListener('input', () => {
-    if (downloading || URL_INPUT.value.trim() === currentUrl) return;
-    videoInfo = null; currentUrl = null;
-    INFO_CARD.classList.remove('visible');
-    setFmtEnabled(false); DOWNLOAD_BTN.disabled = true;
-  });
+  LOAD_LIST_BTN.addEventListener('click', onLoadList);
   ANALYZE_BTN.addEventListener('click', onAnalyze);
   DOWNLOAD_BTN.addEventListener('click', () => startDownload(selectedFormat));
   CANCEL_BTN.addEventListener('click', onCancel);
@@ -2029,6 +2166,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function escAttr(s) { return escHtml(s).replace(/"/g, '&quot;'); }
 
   function buildQualityChips(qualities) {
     QUALITY_CHIPS.innerHTML = '';
@@ -2049,7 +2187,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function setAnalyzing(busy) {
     ANALYZE_BTN.disabled = busy;
     ANALYZE_BTN.textContent = busy ? 'Analyzing...' : 'Analyze';
-    if (busy) STATUS_TEXT.textContent = 'Fetching video info...';
+    // The status line belongs to a running job when there is one.
+    if (busy && !downloading) STATUS_TEXT.textContent = 'Fetching video info...';
   }
 
   // TXT stays locked when the build ships without the whisper engine. Local
@@ -2079,11 +2218,297 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function readyToStart() {
-    return sourceMode === 'file' ? !!localFile : !!videoInfo;
+    if (sourceMode === 'file') return !!localFile;
+    if (playlist) return (selectedFormat !== 'txt' || transcribeAvailable)
+                         && selectedRows().length > 0;
+    return !!videoInfo;
+  }
+
+  /* ---- playlists ---------------------------------------------------------
+     A playlist is transcribed as a queue on the server, one video at a time,
+     so the page only has to say which ones. Selection lives on the row
+     checkboxes themselves; the arrays here only keep them in order. */
+  function fmtClock(s) {
+    if (!s) return '';
+    const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, sec = s % 60;
+    const pad = n => String(n).padStart(2, '0');
+    return h ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+  }
+  function fmtLong(s) {
+    if (!s) return '';
+    const h = Math.floor(s / 3600), m = Math.round(s / 60) % 60;
+    return h ? `${h}h ${m}m` : `${Math.max(1, Math.round(s / 60))} min`;
+  }
+
+  const selectedRows = () => plRows.filter(r => r.box.checked && !r.box.disabled);
+  const visibleRows = () => plRows.filter(r => r.el.style.display !== 'none' && !r.box.disabled);
+
+  function clearPlaylist() {
+    playlist = null; plRows = []; batchRows = null; plAnchor = null;
+    PL_LIST.innerHTML = '';
+    PL_FILTER.value = '';
+    PL_CARD.classList.remove('visible');
+    LOAD_LIST_BTN.hidden = true;
+  }
+
+  function showPlaylist(data) {
+    videoInfo = null;
+    clearPlaylist();
+    playlist = data;
+    TITLE_TEXT.textContent = data.title;
+    CHANNEL_TEXT.textContent = data.channel || 'Playlist';
+    META_TEXT.textContent = [data.count + (data.count === 1 ? ' video' : ' videos'), data.duration]
+      .filter(Boolean).join('  ·  ');
+    if (data.thumbnail) {
+      THUMB_IMG.src = data.thumbnail; THUMB_IMG.style.display = 'block'; THUMB_PH.style.display = 'none';
+    } else {
+      THUMB_IMG.style.display = 'none'; THUMB_PH.style.display = 'flex';
+      THUMB_PH.textContent = 'Playlist';
+    }
+    INFO_CARD.classList.add('visible');
+    buildPlaylistRows();
+    PL_CARD.classList.add('visible');
+    if (selectedFormat === 'txt' && !transcribeAvailable) selectFormat('mp4');
+    // Nothing has been asked of any one video yet, so the real list of heights
+    // is unknown; these are caps, and each video gets the best it has below.
+    buildQualityChips(['2160p', '1440p', '1080p', '720p', '480p', '360p']);
+    setFmtEnabled(!downloading);
+    if (!downloading) STATUS_TEXT.textContent = 'Ready';
+    syncOptionRows();
+  }
+
+  function buildPlaylistRows() {
+    PL_LIST.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    plRows = playlist.entries.map((e, i) => {
+      const el = document.createElement('label');
+      el.className = 'pl-row' + (e.available ? '' : ' gone');
+      el.setAttribute('role', 'listitem');
+      el.innerHTML =
+        `<input type="checkbox"${e.available ? ' checked' : ' disabled'}>`
+        + `<span class="pl-idx">${e.index}</span>`
+        + `<img class="pl-thumb" loading="lazy" alt="" src="https://i.ytimg.com/vi/${encodeURIComponent(e.id)}/mqdefault.jpg">`
+        + `<span class="pl-title" title="${escAttr(e.title)}">${escHtml(e.title)}</span>`
+        + `<span class="pl-dur">${e.available ? fmtClock(e.duration) : 'unavailable'}</span>`
+        + `<span class="pl-state" aria-hidden="true"></span>`;
+      const row = {entry: e, el, box: el.querySelector('input'), state: null, i};
+      // Shift-click selects or clears the whole run since the last click, which
+      // is how anyone expects to pick "episodes 5 to 20" out of a long list.
+      el.addEventListener('click', ev => {
+        if (ev.target !== row.box) return;
+        if (ev.shiftKey && plAnchor !== null && plAnchor !== i) {
+          const [a, b] = plAnchor < i ? [plAnchor, i] : [i, plAnchor];
+          plRows.slice(a, b + 1).forEach(r => {
+            if (!r.box.disabled && r.el.style.display !== 'none') r.box.checked = row.box.checked;
+          });
+        }
+        plAnchor = i;
+      });
+      row.box.addEventListener('change', syncPlaylistCount);
+      frag.appendChild(el);
+      return row;
+    });
+    PL_LIST.appendChild(frag);
+    syncPlaylistCount();
+  }
+
+  function syncPlaylistCount() {
+    if (!playlist) return;
+    const sel = selectedRows();
+    const vis = visibleRows();
+    const visSel = vis.filter(r => r.box.checked).length;
+    PL_COUNT.textContent = `${sel.length} of ${plRows.filter(r => !r.box.disabled).length} selected`;
+    PL_ALL.checked = vis.length > 0 && visSel === vis.length;
+    PL_ALL.indeterminate = visSel > 0 && visSel < vis.length;
+    PL_TOTAL.textContent = fmtLong(sel.reduce((a, r) => a + (r.entry.duration || 0), 0));
+    plRows.forEach(r => r.el.classList.toggle('off', !r.box.checked));
+    if (!downloading) {
+      const verb = selectedFormat === 'txt' ? 'Transcribe' : 'Download';
+      DOWNLOAD_BTN.textContent = !sel.length ? `Pick videos to ${verb.toLowerCase()}`
+        : sel.length === 1 ? `${verb} 1 video` : `${verb} ${sel.length} videos`;
+      DOWNLOAD_BTN.disabled = !readyToStart();
+    }
+  }
+
+  // Select-all acts on what the filter shows, so "filter for 'lecture', select
+  // all" picks exactly the lectures.
+  PL_ALL.addEventListener('change', () => {
+    visibleRows().forEach(r => { r.box.checked = PL_ALL.checked; });
+    syncPlaylistCount();
+  });
+
+  PL_FILTER.addEventListener('input', () => {
+    const q = PL_FILTER.value.trim().toLowerCase();
+    plRows.forEach(r => {
+      r.el.style.display = !q || r.entry.title.toLowerCase().includes(q) ? '' : 'none';
+    });
+    let empty = PL_LIST.querySelector('.pl-empty');
+    const none = q && !plRows.some(r => r.el.style.display !== 'none');
+    if (none && !empty) {
+      empty = document.createElement('div');
+      empty.className = 'pl-empty';
+      PL_LIST.appendChild(empty);
+    }
+    if (empty) {
+      empty.textContent = none ? 'No video matches that.' : '';
+      empty.style.display = none ? '' : 'none';
+    }
+    syncPlaylistCount();
+  });
+
+  const STATE_MARK = {done: '✓', error: '!', skipped: '–'};
+  function setRowState(row, state, error) {
+    if (row.state === state && !error) return;
+    row.state = state;
+    ['running', 'done', 'error', 'skipped', 'pending'].forEach(s =>
+      row.el.classList.toggle('s-' + s, s === state));
+    const mark = row.el.querySelector('.pl-state');
+    mark.innerHTML = state === 'running' ? '<span class="pl-spin"></span>' : (STATE_MARK[state] || '');
+    mark.title = state === 'skipped' ? 'Already transcribed — skipped' : (state || '');
+    let err = row.el.querySelector('.pl-err');
+    if (state === 'error' && error) {
+      if (!err) {
+        err = document.createElement('span');
+        err.className = 'pl-err';
+        row.el.appendChild(err);
+      }
+      err.textContent = error;
+    } else if (err) {
+      err.remove();
+    }
+  }
+
+  // The server leaves the per-video list out of a poll when nothing in it
+  // changed since the revision we hold, so a long playlist is not re-sent and
+  // re-walked twice a second for nothing.
+  let batchRev = null, batchShownIndex = null;
+  function applyBatch(batch) {
+    if (!batch) return;
+    if (batch.items) {
+      batchRev = batch.rev;
+      if (batchRows) batch.items.forEach((it, k) => {
+        const row = batchRows[k];
+        if (row) setRowState(row, it.state, it.error);
+      });
+    }
+    // Keep the video being worked on in view, once per video, and never while
+    // the user is scrolling through the list themselves.
+    const cur = batchRows && batchRows[batch.index];
+    if (cur && batch.index !== batchShownIndex && cur.state === 'running'
+        && !PL_LIST.matches(':hover')) {
+      batchShownIndex = batch.index;
+      cur.el.scrollIntoView({block: 'nearest'});
+    }
+  }
+
+  function onLoadList() {
+    if (!videoInfo || !videoInfo.list_id) return;
+    const seq = ++analyzeSeq;
+    hideError();
+    LOAD_LIST_BTN.disabled = true;
+    LOAD_LIST_BTN.textContent = 'Loading playlist...';
+    api('/api/playlist', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({list_id: videoInfo.list_id}),
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (seq !== analyzeSeq) return;
+      if (data.error) {
+        if (data.needs_cookies) showAuthError(data.error, data.browsers, onLoadList);
+        else showError(data.error);
+        return;
+      }
+      showPlaylist(data);
+    })
+    .catch(err => showError('Network error: ' + err.message))
+    .finally(() => {
+      LOAD_LIST_BTN.disabled = false;
+      LOAD_LIST_BTN.textContent = 'Load the whole playlist';
+    });
+  }
+
+  function startBatch() {
+    if (downloading || !playlist) return;
+    const rows = selectedRows();
+    if (!rows.length) return;
+    hideError();
+    plRows.forEach(r => setRowState(r, null));
+    rows.forEach(r => setRowState(r, 'pending'));
+    batchRows = rows;
+    batchRev = null; batchShownIndex = null;
+    PROGRESS_CARD.classList.add('visible');
+    barReset();
+    barRunning();
+    RESULT_ROW.classList.remove('visible');
+    setDownloading(true);
+    updateProgress(0, 0, 0, 'Starting...');
+    api('/api/batch', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        items: rows.map(r => ({id: r.entry.id, title: r.entry.title, index: r.entry.index})),
+        total: playlist.count, playlist_title: playlist.title,
+        format: selectedFormat, quality: selectedQuality,
+        model: selectedModel, lang: selectedLang,
+      }),
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        setDownloading(false);
+        showError(data.error);
+        PROGRESS_CARD.classList.remove('visible');
+        return;
+      }
+      taskId = data.task_id;
+      pollProgress(taskId);
+    })
+    .catch(err => { setDownloading(false); showError('Network error: ' + err.message); PROGRESS_CARD.classList.remove('visible'); });
+  }
+
+  // What is left checked afterwards is exactly what did not get done, so the
+  // same button retries the failures (and resumes after a cancel).
+  function finishBatch(data) {
+    setDownloading(false);
+    (batchRows || []).forEach(r => {
+      if (r.state === 'done' || r.state === 'skipped') r.box.checked = false;
+    });
+    syncPlaylistCount();
+    SPEED_TEXT.textContent = '';
+    if (data.folder) {
+      RESULT_ROW.classList.add('visible');
+      OPEN_FILE_BTN.textContent = 'Open folder';
+      REVEAL_BTN.style.display = 'none';
+    }
+    const retry = () => startBatch();
+    if (data.cancelled) {
+      BAR_FILL.classList.remove(...BAR_ANIM);
+      STATUS_TEXT.textContent = data.status || 'Cancelled';
+    } else if (data.error) {
+      BAR_FILL.classList.remove(...BAR_ANIM);
+      STATUS_TEXT.textContent = data.status || 'Error';
+      if (data.needs_cookies) showAuthError(data.error, data.browsers, retry);
+      else showError(data.error);
+    } else {
+      barDone();
+      const folder = (data.folder || '').split(/[\\/]/).pop();
+      STATUS_TEXT.textContent = data.status + (folder ? ` — in Downloads\\Y2obi\\${folder}` : '');
+      toast('Playlist done: ' + data.status);
+      if (data.needs_cookies) {
+        showAuthError('Some videos need a signed-in YouTube session. Sign in, and '
+          + 'the button retries just those.', data.browsers, retry);
+      }
+    }
   }
 
   function setDownloading(busy) {
     downloading = busy;
+    if (busy) {
+      $('jobTitle').textContent = sourceMode === 'file'
+        ? (localFile ? localFile.name : '')
+        : playlist ? playlist.title : (videoInfo ? videoInfo.title : '');
+    }
+    DOWNLOAD_BTN.title = busy ? 'One job at a time: wait for the current one, or cancel it' : '';
     refreshFx();
     const ready = readyToStart();
     setFmtEnabled(!busy && ready);
@@ -2099,6 +2524,14 @@ document.addEventListener('DOMContentLoaded', () => {
     MODEL_CHIPS.classList.toggle('locked', busy);
     LANG_CHIPS.classList.toggle('locked', busy);
     TS_CHIPS.classList.toggle('locked', busy);
+    OUT_CHIPS.classList.toggle('locked', busy);
+    TS_RANGE.disabled = busy;
+    LOAD_LIST_BTN.disabled = busy;
+    // The queue was fixed when it started; ticking boxes mid-run would only
+    // suggest otherwise.
+    PL_LIST.classList.toggle('locked', busy);
+    PL_ALL.disabled = busy;
+    plRows.forEach(r => { r.box.disabled = busy || !r.entry.available; });
   }
 
   // The bar has three states and only one place that sets them. Running is the
@@ -2143,15 +2576,37 @@ document.addEventListener('DOMContentLoaded', () => {
   function fmtCount(n) { if (!n) return ''; if(n>=1000000) return (n/1000000).toFixed(1)+'M'; if(n>=1000) return Math.round(n/1000)+'K'; return String(n); }
   function fmtSize(b)  { if (!b) return ''; if(b>=1073741824) return (b/1073741824).toFixed(1)+' GB'; if(b>=1048576) return Math.round(b/1048576)+' MB'; return Math.round(b/1024)+' KB'; }
 
+  // The bar is emptied as soon as a link is taken, so it is always ready for
+  // the next paste and never shows a URL that is not the one on screen; the
+  // info card is what says which video is loaded. A link that fails comes
+  // back into the bar so it can be fixed instead of pasted again.
   function onAnalyze() {
     const url = URL_INPUT.value.trim();
     if (!url) return;
+    URL_INPUT.value = '';
+    analyzeUrl(url);
+  }
+
+  // Two links in quick succession (paste, then Enter) used to race, and the
+  // slower answer won whichever it was. Only the latest request may paint.
+  let analyzeSeq = 0;
+
+  // A job already running is left completely alone: its progress card, its
+  // Cancel button and its task carry on while the next link is looked at.
+  // This used to hide the card and re-enable Download, which looked exactly
+  // like the download had been cancelled and left it running with no way to
+  // stop it.
+  function analyzeUrl(url) {
+    const seq = ++analyzeSeq;
     hideError();
     currentUrl = url; videoInfo = null;
+    clearPlaylist();
     INFO_CARD.classList.remove('visible');
     setFmtEnabled(false); DOWNLOAD_BTN.disabled = true;
-    PROGRESS_CARD.classList.remove('visible');
+    if (!downloading) PROGRESS_CARD.classList.remove('visible');
     setAnalyzing(true);
+    const retry = () => analyzeUrl(url);
+    const giveBack = () => { if (!URL_INPUT.value.trim()) URL_INPUT.value = url; };
 
     api('/api/analyze', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -2159,13 +2614,17 @@ document.addEventListener('DOMContentLoaded', () => {
     })
     .then(r => r.json())
     .then(data => {
+      if (seq !== analyzeSeq) return;
       setAnalyzing(false);
       if (data.error) {
-        if (data.needs_cookies) { showAuthError(data.error, data.browsers, onAnalyze); }
-        else { showError(data.error, data.playlist ? 'Paste a single video URL, not a playlist.' : null); }
+        giveBack();
+        if (data.needs_cookies) { showAuthError(data.error, data.browsers, retry); }
+        else { showError(data.error); }
         return;
       }
+      if (data.kind === 'playlist') { showPlaylist(data); return; }
       videoInfo = data;
+      LOAD_LIST_BTN.hidden = !data.list_id;
       TITLE_TEXT.textContent = data.title;
       CHANNEL_TEXT.textContent = data.channel;
       const parts = [];
@@ -2174,8 +2633,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (data.likes) parts.push(fmtCount(data.likes) + ' likes');
       META_TEXT.textContent = parts.join('  ·  ');
       INFO_CARD.classList.add('visible');
-      setFmtEnabled(true); DOWNLOAD_BTN.disabled = false;
-      STATUS_TEXT.textContent = 'Ready to download';
+      setFmtEnabled(!downloading); DOWNLOAD_BTN.disabled = downloading;
+      if (!downloading) STATUS_TEXT.textContent = 'Ready to download';
       if (data.thumbnail) {
         THUMB_IMG.src = data.thumbnail; THUMB_IMG.style.display = 'block'; THUMB_PH.style.display = 'none';
       } else {
@@ -2190,16 +2649,20 @@ document.addEventListener('DOMContentLoaded', () => {
         showAuthError(
           'YouTube returned no audio stream for this video, so MP3 and transcript '
           + 'are unavailable. That usually means it is throttling requests that are '
-          + 'not signed in.', lastBrowsers, onAnalyze);
+          + 'not signed in.', lastBrowsers, retry);
       }
       syncOptionRows();
     })
-    .catch(err => { setAnalyzing(false); showError('Network error: ' + err.message); });
+    .catch(err => {
+      if (seq !== analyzeSeq) return;
+      setAnalyzing(false); giveBack(); showError('Network error: ' + err.message);
+    });
   }
 
   function startDownload(fmt) {
     const isFile = sourceMode === 'file';
     if (downloading) return;
+    if (!isFile && playlist) { startBatch(); return; }
     if (isFile ? !localFile : (!videoInfo || !currentUrl)) return;
     hideError();
     PROGRESS_CARD.classList.add('visible');
@@ -2239,11 +2702,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function pollProgress(id) {
     if (pollTimer) clearTimeout(pollTimer);
-    api('/api/progress/' + id)
+    api('/api/progress/' + id + (batchRev !== null ? '?rev=' + batchRev : ''))
     .then(r => r.json())
     .then(data => {
       if (data.error && !data.done) { setDownloading(false); showError(data.error); PROGRESS_CARD.classList.remove('visible'); return; }
       updateProgress(data.percent, data.speed, data.eta, data.status, data.rate);
+      if (data.batch) {
+        applyBatch(data.batch);
+        if (data.done) { finishBatch(data); return; }
+        pollTimer = setTimeout(() => pollProgress(id), 500);
+        return;
+      }
       if (data.done) {
         if (data.cancelled) {
           setDownloading(false); STATUS_TEXT.textContent = 'Cancelled';
@@ -2265,10 +2734,13 @@ document.addEventListener('DOMContentLoaded', () => {
           const extras = data.extra_filenames || [];
           STATUS_TEXT.textContent = extras.length
             ? 'Saved .txt + .srt to ~/Downloads/Y2obi/'
-            : 'Saved to ~/Downloads/Y2obi/';
+            : (data.filename && data.filename.endsWith('.txt')
+               ? 'Saved .txt to ~/Downloads/Y2obi/' : 'Saved to ~/Downloads/Y2obi/');
           SPEED_TEXT.textContent = 'Done';
           RESULT_ROW.classList.toggle('visible', !!data.filename);
-          OPEN_FILE_BTN.textContent = extras.length ? 'Open transcript' : 'Open file';
+          REVEAL_BTN.style.display = '';
+          OPEN_FILE_BTN.textContent = data.filename && data.filename.endsWith('.txt')
+            ? 'Open transcript' : 'Open file';
           toast(data.filename ? 'Saved: ' + data.filename : 'Done! Check ~/Downloads/Y2obi/');
         }
         return;
