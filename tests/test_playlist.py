@@ -344,6 +344,54 @@ class FailedRungCleanup(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(out)), ["already here.mp4", "v.mp4"])
 
 
+class QualityFallback(unittest.TestCase):
+    """android_vr 403s halfway through a 4K stream, android then serves 360p.
+    That is a download, but not the one asked for, and it must say so."""
+
+    def _download(self, quality, first_height=2160, got=360):
+        out = tempfile.mkdtemp(prefix="y2obi_t_")
+        self.addCleanup(shutil.rmtree, out, True)
+        d = dl.Downloader()
+        d._ladder = lambda: [("a", False), ("b", False)]
+        d._rung_opts = lambda opts, clients, use_cookies: opts.update(_rung=clients)
+
+        class _Ydl:
+            def __init__(self, opts):
+                self.opts = opts
+
+            def extract_info(self, url, download):
+                final = self.opts["outtmpl"].replace("%(ext)s", "mp4")
+                if self.opts["_rung"] == "a" and first_height:
+                    d._hook({"status": "downloading", "filename": final + ".f401",
+                             "info_dict": {"height": first_height}})
+                    raise dl.yt_dlp.utils.DownloadError("HTTP Error 403: Forbidden")
+                open(final, "wb").close()
+                return {"filepath": final, "height": got}
+
+            def close(self):
+                pass
+
+        with mock.patch.object(dl.yt_dlp, "YoutubeDL", _Ydl):
+            path = d.download_mp4("https://www.youtube.com/watch?v=aaaaaaaaaaa", out,
+                                  quality, name="Clip")
+        return d, path, sorted(os.listdir(out))
+
+    def test_best_that_fell_back_is_named_after_what_it_is(self):
+        d, path, files = self._download("Best")
+        self.assertEqual(d.downgrade, {"wanted": 2160, "got": 360})
+        self.assertEqual(files, ["Clip [360p].mp4"])
+        self.assertTrue(path.endswith("Clip [360p].mp4"))
+
+    def test_a_capped_quality_label_is_replaced_not_stacked(self):
+        d, _, files = self._download("1080p", first_height=1080)
+        self.assertEqual(files, ["Clip [360p].mp4"])
+
+    def test_a_clean_download_is_left_alone(self):
+        d, _, files = self._download("Best", first_height=0, got=2160)
+        self.assertIsNone(d.downgrade)
+        self.assertEqual(files, ["Clip.mp4"])
+
+
 class BatchRun(_Base):
     def setUp(self):
         super().setUp()
@@ -456,6 +504,35 @@ class BatchRun(_Base):
         with mock.patch.object(srv, "_download_item", side_effect=download):
             srv._run_batch("b", items, self.out, "small", "auto", {}, "mp4", "720p")
         self.assertEqual(seen, [])
+
+    def test_a_lower_quality_fallback_is_flagged_and_retried_next_run(self):
+        def download(task_id, url, out_dir, name, fmt, quality, *a):
+            if "bbbbbbbbbbb" in url:
+                # What Downloader._label_downgrade leaves behind.
+                open(os.path.join(out_dir, f"{name} [360p].mp4"), "w").close()
+                return {"wanted": 2160, "got": 360}
+            open(os.path.join(out_dir, f"{name}.mp4"), "w").close()
+        items = self._items("aaaaaaaaaaa", "bbbbbbbbbbb")
+        fresh = lambda: [{"id": i["id"], "state": "pending", "error": None, "note": None}  # noqa: E731
+                         for i in items]
+        srv.tasks["b"] = {"percent": 0, "speed": 0, "eta": 0, "rate": None, "status": "",
+                          "done": False, "cancelled": False, "path": None,
+                          "kind": "media", "index": 0, "batch": fresh()}
+        with mock.patch.object(srv, "_download_item", side_effect=download):
+            srv._run_batch("b", items, self.out, "small", "auto", {}, "mp4", "Best")
+        body = self.c.get("/api/progress/b").get_json()
+        rows = body["batch"]["items"]
+        self.assertEqual([r["state"] for r in rows], ["done", "done"])
+        self.assertIsNone(rows[0]["note"])
+        self.assertIn("360p", rows[1]["note"])
+        self.assertIn("2 downloaded · 1 at lower quality", body["status"])
+        # The 360p file does not carry the asked-for name, so a rerun retries it.
+        srv.tasks["b"].update(done=False, batch=fresh())
+        retried = mock.Mock(side_effect=download)
+        with mock.patch.object(srv, "_download_item", retried):
+            srv._run_batch("b", items, self.out, "small", "auto", {}, "mp4", "Best")
+        self.assertEqual(retried.call_count, 1)
+        self.assertIn("bbbbbbbbbbb", retried.call_args.args[1])
 
     def test_the_list_is_only_sent_when_it_changed(self):
         srv.tasks["b"] = {"percent": 0, "speed": 0, "eta": 0, "status": "",

@@ -490,6 +490,7 @@ class Downloader:
         self._status_cb = None
         self._cancel = False
         self._partials = set()  # files the current rung has written, see _discard_partials
+        self.downgrade = None   # {"wanted", "got"} heights when a fallback served less
 
     def set_callbacks(self, progress=None, status=None):
         self._progress_cb = progress
@@ -709,6 +710,8 @@ class Downloader:
         """
         self._cancel = False
         self._clipping = 'download_ranges' in fmt_opts
+        self.downgrade = None
+        attempted = 0  # tallest stream a failed rung was already fetching
         last_err = None
         # The first error's text is the precise one, but a block reported by a
         # later rung is still a block: android_vr answering 403 and android then
@@ -720,6 +723,7 @@ class Downloader:
             self._rung_opts(opts, clients, use_cookies)
             ydl = yt_dlp.YoutubeDL(opts)
             self._partials = set()
+            self._rung_height = 0
             try:
                 info = ydl.extract_info(url, download=True)
             except yt_dlp.utils.DownloadError as e:
@@ -727,6 +731,7 @@ class Downloader:
                 self._discard_partials()
                 if "Cancelled" in str(e):
                     raise
+                attempted = max(attempted, self._rung_height)
                 last_err = last_err or e
                 auth = auth or looks_like_auth_error(e)
                 blocked = blocked or looks_like_no_streams(e)
@@ -738,6 +743,13 @@ class Downloader:
 
             path = self._resolve_path(info, ydl, template)
             if path and os.path.exists(path):
+                # A client that 403s halfway through a 4K stream sends the
+                # ladder on to one that may only serve 360p. That is still a
+                # download, but not the one asked for, and saying nothing made
+                # it look like "Best" meant 360p.
+                got = (info or {}).get('height') or 0
+                if attempted and got and got < attempted:
+                    self.downgrade = {"wanted": attempted, "got": got}
                 return path
             # Extraction worked, so another client will not help.
             raise DownloadError(f"No file — {what} did not produce output")
@@ -754,26 +766,48 @@ class Downloader:
             ) from last_err
         raise DownloadError(f"YouTube download error: {last_err}") from last_err
 
+    def _label_downgrade(self, path, qlabel):
+        """Name a fallback download after the quality it really has.
+
+        "Title.mp4" holding 360p would pass for the Best that was asked for,
+        and every later run would skip it as already done. "Title [360p].mp4"
+        says what it is, and leaves the asked-for name free so the next
+        attempt (or a playlist rerun) fetches the real thing.
+        """
+        if not self.downgrade:
+            return path
+        tag = f" [{self.downgrade['got']}p]"
+        folder, name = os.path.split(path)
+        base, ext = os.path.splitext(name)
+        cut = base.rfind(qlabel) if qlabel else -1
+        base = base[:cut] + tag + base[cut + len(qlabel):] if cut >= 0 else base + tag
+        new = os.path.join(folder, base + ext)
+        try:
+            os.replace(path, new)
+        except OSError:
+            return path
+        return new
+
     def download_mp4(self, url, output_dir, quality="Best", clip=None, name=None):
         qlabel = f" [{quality}]" if quality != "Best" else ""
         template = os.path.join(output_dir, f"{_name_tmpl(name)}{qlabel}{clip_label(clip)}.%(ext)s")
         max_h, _ = QUALITY_MAP.get(quality, (None, None))
         fmt_sort = [f"height:{max_h}", "ext", "vcodec", "acodec"] if max_h else ["res", "ext", "vcodec", "acodec"]
-        return self._run_download(url, template, {
+        return self._label_downgrade(self._run_download(url, template, {
             'format': f"bestvideo[height<={max_h}]+bestaudio/best[height<={max_h}]" if max_h else "bestvideo+bestaudio/best",
             'format_sort': fmt_sort,
             'merge_output_format': 'mp4',
             **self._clip_opts(clip),
-        })
+        }), qlabel)
 
     def download_webm(self, url, output_dir, quality="Best", clip=None, name=None):
         qlabel = f" [{quality}]" if quality != "Best" else ""
         template = os.path.join(output_dir, f"{_name_tmpl(name)}{qlabel}{clip_label(clip)}.%(ext)s")
-        return self._run_download(url, template, {
+        return self._label_downgrade(self._run_download(url, template, {
             'format': QUALITY_MAP_WEBM.get(quality, QUALITY_MAP_WEBM["Best"]),
             'merge_output_format': 'webm',
             **self._clip_opts(clip),
-        })
+        }), qlabel)
 
     def download_mp3(self, url, output_dir, clip=None, name=None):
         template = os.path.join(output_dir, f"{_name_tmpl(name)}{clip_label(clip)}.%(ext)s")
@@ -824,6 +858,8 @@ class Downloader:
             for key in ('tmpfilename', 'filename'):
                 if d.get(key):
                     self._partials.add(d[key])
+            height = (d.get('info_dict') or {}).get('height') or 0
+            self._rung_height = max(getattr(self, '_rung_height', 0), height)
         if self._cancel:
             raise yt_dlp.utils.DownloadError("Cancelled")
         if d['status'] == 'already_downloaded':

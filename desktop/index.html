@@ -36,6 +36,7 @@
     --on-accent: var(--vitra-color-text-inverse);
     --ok-fg:  #2ced8c; --ok-bg:  rgba(16,183,99,.16);  --ok-bd:  rgba(16,183,99,.35);
     --bad-fg: #f37272; --bad-bg: rgba(239,67,67,.14);  --bad-bd: rgba(239,67,67,.32);
+    --warn-fg: #f2b84b;
     --fx-op: .55;
     /* Two companions for the accent in the particle field, a step around the
        wheel each way, so the drift stays part of the same palette. */
@@ -65,6 +66,7 @@
     --on-accent: hsl(var(--vitra-color-accent-h) var(--vitra-color-accent-s) 10%);
     --ok-fg:  #0a7040; --ok-bg:  rgba(16,183,99,.14); --ok-bd:  rgba(16,183,99,.4);
     --bad-fg: #b02020; --bad-bg: rgba(239,67,67,.1);  --bad-bd: rgba(239,67,67,.3);
+    --warn-fg: #855400;
     --fx-op: .3;
   }
 
@@ -328,6 +330,7 @@
   .pl-state { width: 18px; height: 18px; display: flex; align-items: center; justify-content: center;
     font-size: 13px; font-weight: 800; }
   .pl-err { grid-column: 4 / -1; font-size: 11.5px; color: var(--bad-fg); line-height: 1.4; margin-top: -3px; }
+  .pl-err.warn, .pl-row.s-done.s-lower .pl-state { color: var(--warn-fg); }
   .pl-row.s-running { background: color-mix(in srgb, var(--vitra-color-accent) 11%, transparent); }
   .pl-row.s-done .pl-state { color: var(--ok-fg); }
   .pl-row.s-error .pl-state { color: var(--bad-fg); }
@@ -431,6 +434,7 @@
   .progress-card .vitra-progress-value { color: var(--vitra-color-text-primary); font-weight: 700; }
   .progress-stats { display: flex; margin-top: 6px; font-size: 12.5px; align-items: center; gap: 10px; }
   .progress-stats .status { flex: 1; color: var(--vitra-color-text-secondary); }
+  .progress-stats .status.warn { color: var(--warn-fg); }
   .progress-stats .speed-eta { color: var(--faint); font-size: 12px; white-space: nowrap; }
   /* A full bar whose stripes keep marching reads as "still working". The
      striped/animated classes are added by JS while a job runs and taken off the
@@ -2357,25 +2361,31 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   const STATE_MARK = {done: '✓', error: '!', skipped: '–'};
-  function setRowState(row, state, error) {
-    if (row.state === state && !error) return;
+  function setRowState(row, state, error, note) {
+    if (row.state === state && !error && (note || null) === (row.note || null)) return;
     row.state = state;
+    row.note = note || null;
     ['running', 'done', 'error', 'skipped', 'pending'].forEach(s =>
       row.el.classList.toggle('s-' + s, s === state));
     const mark = row.el.querySelector('.pl-state');
     mark.innerHTML = state === 'running' ? '<span class="pl-spin"></span>' : (STATE_MARK[state] || '');
     mark.title = state === 'skipped' ? 'Already transcribed — skipped' : (state || '');
+    // One line under the title: why it failed, or why it is not what was asked
+    // for (a fallback that only had a lower quality).
+    const text = state === 'error' ? error : (state === 'done' ? note : null);
     let err = row.el.querySelector('.pl-err');
-    if (state === 'error' && error) {
+    if (text) {
       if (!err) {
         err = document.createElement('span');
-        err.className = 'pl-err';
         row.el.appendChild(err);
       }
-      err.textContent = error;
+      err.className = 'pl-err' + (state === 'done' ? ' warn' : '');
+      err.textContent = text;
+      if (state === 'done') mark.textContent = '!';
     } else if (err) {
       err.remove();
     }
+    row.el.classList.toggle('s-lower', state === 'done' && !!note);
   }
 
   // The server leaves the per-video list out of a poll when nothing in it
@@ -2388,7 +2398,7 @@ document.addEventListener('DOMContentLoaded', () => {
       batchRev = batch.rev;
       if (batchRows) batch.items.forEach((it, k) => {
         const row = batchRows[k];
-        if (row) setRowState(row, it.state, it.error);
+        if (row) setRowState(row, it.state, it.error, it.note);
       });
     }
     // Keep the video being worked on in view, once per video, and never while
@@ -2470,8 +2480,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // same button retries the failures (and resumes after a cancel).
   function finishBatch(data) {
     setDownloading(false);
+    // A video saved at a lower quality stays ticked: it is not what was asked
+    // for, and its file is named so that the retry does not skip it.
     (batchRows || []).forEach(r => {
-      if (r.state === 'done' || r.state === 'skipped') r.box.checked = false;
+      if ((r.state === 'done' && !r.note) || r.state === 'skipped') r.box.checked = false;
     });
     syncPlaylistCount();
     SPEED_TEXT.textContent = '';
@@ -2493,6 +2505,7 @@ document.addEventListener('DOMContentLoaded', () => {
       barDone();
       const folder = (data.folder || '').split(/[\\/]/).pop();
       STATUS_TEXT.textContent = data.status + (folder ? ` — in Downloads\\Y2obi\\${folder}` : '');
+      STATUS_TEXT.classList.toggle('warn', (batchRows || []).some(r => r.note));
       toast('Playlist done: ' + data.status);
       if (data.needs_cookies) {
         showAuthError('Some videos need a signed-in YouTube session. Sign in, and '
@@ -2551,6 +2564,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function barReset() {
     BAR_FILL.classList.remove(...BAR_ANIM);
     PROGRESS_CARD.classList.remove('done');
+    STATUS_TEXT.classList.remove('warn');
     BAR_FILL.style.width = '0%';
     PCT_TEXT.textContent = '';
     SPEED_TEXT.textContent = '';
@@ -2742,6 +2756,15 @@ document.addEventListener('DOMContentLoaded', () => {
           OPEN_FILE_BTN.textContent = data.filename && data.filename.endsWith('.txt')
             ? 'Open transcript' : 'Open file';
           toast(data.filename ? 'Saved: ' + data.filename : 'Done! Check ~/Downloads/Y2obi/');
+          // A fallback client served less than the stream that was cut off.
+          // The file is named after what it really is, so Download again
+          // fetches the real one instead of finding this one "already there".
+          if (data.downgrade) {
+            STATUS_TEXT.textContent = `Saved at ${data.downgrade.got}p: YouTube cut the `
+              + `${data.downgrade.wanted}p stream off. Signed in it usually does not; `
+              + 'Download again to retry.';
+            STATUS_TEXT.classList.add('warn');
+          }
         }
         return;
       }

@@ -813,7 +813,8 @@ def _with_downloader(task_id, cancel, report, on_status, say, run):
 
 
 def _download_item(task_id, url, out_dir, name, fmt, quality, cancel, report, say):
-    """One video of a playlist download, saved as `name` in `out_dir`."""
+    """One video of a playlist download, saved as `name` in `out_dir`.
+    Returns the Downloader's `downgrade`, or None when it got what it asked for."""
     def on_status(msg):
         # The batch does its own skip-if-present check and reports it per row.
         if msg != "__already_exists__":
@@ -821,10 +822,12 @@ def _download_item(task_id, url, out_dir, name, fmt, quality, cancel, report, sa
 
     def run(dl):
         if fmt == "mp4":
-            return dl.download_mp4(url, out_dir, quality, name=name)
-        if fmt == "webm":
-            return dl.download_webm(url, out_dir, quality, name=name)
-        return dl.download_mp3(url, out_dir, name=name)
+            dl.download_mp4(url, out_dir, quality, name=name)
+        elif fmt == "webm":
+            dl.download_webm(url, out_dir, quality, name=name)
+        else:
+            dl.download_mp3(url, out_dir, name=name)
+        return dl.downgrade
 
     say("Downloading...")
     return _with_downloader(task_id, cancel, report, on_status, say, run)
@@ -1000,12 +1003,14 @@ def _run_batch(task_id, items, out_dir, model, lang, opts, fmt="txt", quality="B
                 # in which nothing in it changed -- see progress().
                 t["batch_rev"] = t.get("batch_rev", 0) + 1
 
-    counts = {"done": 0, "skipped": 0, "error": 0}
+    counts = {"done": 0, "skipped": 0, "error": 0, "lower": 0}
     verb = "transcribed" if transcribing else "downloaded"
 
     def summary():
         # "0 transcribed" only says something when nothing else happened.
         bits = [f"{counts['done']} {verb}"] if counts["done"] or not counts["skipped"] else []
+        if counts["lower"]:
+            bits.append(f"{counts['lower']} at lower quality")
         if counts["skipped"]:
             bits.append(f"{counts['skipped']} already there, skipped")
         if counts["error"]:
@@ -1042,11 +1047,18 @@ def _run_batch(task_id, items, out_dir, model, lang, opts, fmt="txt", quality="B
             mark(i, state="running")
             url = f"https://www.youtube.com/watch?v={item['id']}"
             tmp_dir = tempfile.mkdtemp(prefix="y2obi_src_")
+            note = None
             try:
                 if not transcribing:
-                    _download_item(task_id, url, out_dir, item["stem"], fmt, quality,
-                                   cancel, lambda pct, _eta, _i=i: overall(_i, pct / 100.0),
-                                   say)
+                    low = _download_item(task_id, url, out_dir, item["stem"], fmt, quality,
+                                         cancel, lambda pct, _eta, _i=i: overall(_i, pct / 100.0),
+                                         say)
+                    if low:
+                        # Saved as "... [360p].mp4", so a rerun tries it again.
+                        note = (f"Got {low['got']}p: YouTube cut the {low['wanted']}p "
+                                f"stream off. Signed in it usually does not; "
+                                f"running the playlist again retries it.")
+                        counts["lower"] += 1
                 else:
                     # Downloading audio is a small part of a video's time next
                     # to whisper, so it gets a tenth of that video's share.
@@ -1059,7 +1071,7 @@ def _run_batch(task_id, items, out_dir, model, lang, opts, fmt="txt", quality="B
                     _transcribe_audio(
                         tr, cancel, audio, model_path, prefix, lang, opts,
                         lambda p, _eta, _i=i: overall(_i, 0.1 + 0.9 * p / 100.0), say, gpu)
-                mark(i, state="done")
+                mark(i, state="done", note=note)
                 counts["done"] += 1
             except Exception as e:
                 if cancel.is_set() or "Cancelled" in str(e):
@@ -1158,7 +1170,8 @@ def start_batch():
             "cancelled": False, "path": None, "kind": "media",
             "_dl": None, "_tr": None, "_cv": None,
             "index": 0,
-            "batch": [{"id": it["id"], "state": "pending", "error": None} for it in items],
+            "batch": [{"id": it["id"], "state": "pending", "error": None, "note": None}
+                      for it in items],
         }
     threading.Thread(
         target=_run_batch,
@@ -1313,23 +1326,23 @@ def start_download():
 
         def _go(d):
             if fmt == "mp4":
-                return d.download_mp4(url, DOWNLOAD_DIR, quality, clip)
+                return d.download_mp4(url, DOWNLOAD_DIR, quality, clip), d.downgrade
             if fmt == "webm":
-                return d.download_webm(url, DOWNLOAD_DIR, quality, clip)
-            return d.download_mp3(url, DOWNLOAD_DIR, clip)
+                return d.download_webm(url, DOWNLOAD_DIR, quality, clip), d.downgrade
+            return d.download_mp3(url, DOWNLOAD_DIR, clip), None
 
         try:
             try:
-                path = _go(dl)
+                path, downgrade = _go(dl)
             except BLOCKED:
                 # One silent retry on a refreshed session, same as analyze: the
                 # browser the user approved has probably just expired.
                 if not _refresh_cookies():
                     raise
                 _set(task_id, status="Reconnecting to YouTube...")
-                path = _go(_make_dl())
+                path, downgrade = _go(_make_dl())
             _set(task_id, path=path, done=True, percent=100, status="Complete",
-                 _done_at=time.time())
+                 downgrade=downgrade, _done_at=time.time())
         except Exception as e:
             if "Cancelled" in str(e):
                 _set(task_id, cancelled=True, status="Cancelled", done=True,
@@ -1373,7 +1386,8 @@ def progress(task_id):
         resp["batch"] = {"index": task.get("index", 0), "rev": rev}
         if request.args.get("rev") != str(rev):
             with _lock:
-                resp["batch"]["items"] = [{"state": b["state"], "error": b["error"]}
+                resp["batch"]["items"] = [{"state": b["state"], "error": b["error"],
+                                           "note": b.get("note")}
                                           for b in task["batch"]]
         # Partial results are still results: a cancelled or half-failed
         # playlist has a folder worth opening.
@@ -1386,6 +1400,8 @@ def progress(task_id):
         extra = task.get("extra_files") or []
         if extra:
             resp["extra_filenames"] = [os.path.basename(p) for p in extra]
+        if task.get("downgrade"):
+            resp["downgrade"] = task["downgrade"]
     return jsonify(resp)
 
 
