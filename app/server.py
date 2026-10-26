@@ -19,7 +19,8 @@ from app.downloader import (Downloader, DownloadError, AuthRequired,
                             export_cookies_from_browser, installed_browsers,
                             _parse_formats, QUALITY_MAP)
 from app.downloader import has_session_cookies, parse_clip, ClipError
-from app.downloader import playlist_ref, is_mix, is_video_id, safe_filename
+from app.downloader import (playlist_ref, is_mix, is_channel, channel_videos_url,
+                            is_video_id, safe_filename)
 from app import cleanup
 from app import converter
 from app import transcriber
@@ -168,6 +169,14 @@ def _playlist_url(list_id):
     return f"https://www.youtube.com/playlist?list={list_id}"
 
 
+def _playlist_folder(title):
+    """Folder name for a playlist's files. Capped well under safe_filename's
+    default: folder + "001 - " + a 100-char video title + " [1080p]" + yt-dlp's
+    ".f137.mp4.part" has to stay inside Windows' 260-character path limit,
+    which most machines still enforce."""
+    return safe_filename(title, "Playlist", limit=60)
+
+
 def _playlist_response(url):
     """The JSON for a listed playlist, or the same error shapes analyze uses."""
     try:
@@ -191,6 +200,8 @@ def _playlist_response(url):
         "kind": "playlist",
         "id": pl["id"],
         "title": pl["title"],
+        # The folder start_batch will write to, so the page names the real one.
+        "folder": _playlist_folder(pl["title"]),
         "channel": pl["channel"],
         "count": len(entries),
         "duration": _fmt_duration(sum(e["duration"] or 0 for e in entries)),
@@ -219,6 +230,8 @@ def analyze():
     list_id, has_video = playlist_ref(url)
     if list_id and not has_video:
         return _playlist_response(_playlist_url(list_id))
+    if is_channel(url):
+        return _playlist_response(channel_videos_url(url))
     try:
         try:
             info = _make_dl().get_info(url)
@@ -1110,9 +1123,10 @@ def start_batch():
             continue
         seen.add(it["id"])
         try:
-            index = max(1, int(it.get("index") or 0))
+            index = int(it.get("index") or 0)
         except (TypeError, ValueError):
             index = 0
+        index = max(0, index)  # 0 = no position given, numbered by order below
         items.append({"id": it["id"], "title": str(it.get("title") or it["id"])[:300],
                       "index": index or len(items) + 1})
 
@@ -1127,7 +1141,7 @@ def start_batch():
     for it in items:
         it["stem"] = f"{it['index']:0{width}d} - {safe_filename(it['title'], it['id'])}"
 
-    out_dir = os.path.join(DOWNLOAD_DIR, safe_filename(data.get("playlist_title"), "Playlist"))
+    out_dir = os.path.join(DOWNLOAD_DIR, _playlist_folder(data.get("playlist_title")))
     task_id = uuid.uuid4().hex
     with _lock:
         _reap_tasks()

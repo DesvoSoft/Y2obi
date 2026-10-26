@@ -184,14 +184,40 @@ class AnalyzePlaylists(_Base):
         self.assertIsNone(body["list_id"])
 
     def test_a_list_yt_dlp_found_on_its_own_is_listed(self):
-        # A channel's Videos tab carries no list= at all.
+        # A URL that names no list= and is not a channel page we recognise.
         class _Tab(_FakeDl):
             def get_info(self, url):
                 raise dl.PlaylistError("Playlist detected")
         srv._make_dl = lambda: _Tab(self.calls)
         body = self.c.post("/api/analyze", json={
+            "url": "https://www.youtube.com/feed/somelist"}).get_json()
+        self.assertEqual(body["kind"], "playlist")
+
+    def test_a_channel_is_listed_without_asking_for_one_video(self):
+        # get_info on a channel walked every player client first: 225 s.
+        body = self.c.post("/api/analyze", json={
             "url": "https://www.youtube.com/@chan/videos"}).get_json()
         self.assertEqual(body["kind"], "playlist")
+        self.assertEqual(self.calls, [("playlist", "https://www.youtube.com/@chan/videos")])
+
+    def test_a_bare_channel_lists_its_videos_tab(self):
+        self.c.post("/api/analyze", json={"url": "https://www.youtube.com/@chan"})
+        self.c.post("/api/analyze", json={"url": "https://youtube.com/channel/UCabc/"})
+        self.assertEqual(self.calls, [
+            ("playlist", "https://www.youtube.com/@chan/videos"),
+            ("playlist", "https://youtube.com/channel/UCabc/videos"),
+        ])
+
+    def test_the_folder_name_is_capped(self):
+        class _Long(_FakeDl):
+            def get_playlist(self, url):
+                pl = super().get_playlist(url)
+                pl["title"] = "x" * 150
+                return pl
+        srv._make_dl = lambda: _Long(self.calls)
+        body = self.c.post("/api/analyze", json={
+            "url": "https://www.youtube.com/playlist?list=PLx1"}).get_json()
+        self.assertEqual(body["folder"], "x" * 60)
 
     def test_load_playlist_by_id(self):
         body = self.c.post("/api/playlist", json={"list_id": "PLx1"}).get_json()
@@ -239,6 +265,83 @@ class BatchRoute(_Base):
         self.assertEqual(args[1][0]["stem"], "003 - Intro")
         self.assertEqual(os.path.dirname(args[2]), srv.DOWNLOAD_DIR)
         run.assert_not_called()
+
+    def test_items_without_a_position_are_numbered_in_order(self):
+        # They used to all become 01, and a shared title would then be
+        # skipped as "already there".
+        with mock.patch("threading.Thread") as thread:
+            thread.return_value.start = lambda: None
+            self.c.post("/api/batch", json={"items": [
+                {"id": "aaaaaaaaaaa", "title": "Same"},
+                {"id": "bbbbbbbbbbb", "title": "Same"}]})
+        stems = [it["stem"] for it in thread.call_args.kwargs["args"][1]]
+        self.assertEqual(stems, ["01 - Same", "02 - Same"])
+
+    def test_the_folder_is_capped_for_the_path_limit(self):
+        with mock.patch("threading.Thread") as thread:
+            thread.return_value.start = lambda: None
+            self.c.post("/api/batch", json={"items": [{"id": "aaaaaaaaaaa"}],
+                                            "playlist_title": "y" * 200})
+        self.assertEqual(os.path.basename(thread.call_args.kwargs["args"][2]), "y" * 60)
+
+
+class ChannelUrls(unittest.TestCase):
+    def test_channel_pages_are_recognised(self):
+        for url in ("https://www.youtube.com/@chan", "https://m.youtube.com/@chan/videos",
+                    "https://youtube.com/channel/UCabc", "https://www.youtube.com/c/Name",
+                    "https://www.youtube.com/user/name/videos"):
+            self.assertTrue(dl.is_channel(url), url)
+
+    def test_videos_and_other_sites_are_not(self):
+        for url in ("https://www.youtube.com/watch?v=aaaaaaaaaaa", "https://youtu.be/aaaaaaaaaaa",
+                    "https://example.com/@chan", "not a url"):
+            self.assertFalse(dl.is_channel(url), url)
+
+    def test_a_named_tab_is_kept(self):
+        for url in ("https://www.youtube.com/@chan/shorts",
+                    "https://www.youtube.com/channel/UCabc/streams"):
+            self.assertEqual(dl.channel_videos_url(url), url)
+
+
+class FailedRungCleanup(unittest.TestCase):
+    """A client that 403s halfway leaves its partial stream behind, and the
+    next client then writes the real file beside it."""
+
+    def test_a_failed_rung_leaves_no_partials_and_keeps_old_files(self):
+        out = tempfile.mkdtemp(prefix="y2obi_t_")
+        self.addCleanup(shutil.rmtree, out, True)
+        keep = os.path.join(out, "already here.mp4")
+        open(keep, "wb").close()
+        d = dl.Downloader()
+        d._ladder = lambda: [("a", False), ("b", False)]
+        d._rung_opts = lambda opts, clients, use_cookies: opts.update(_rung=clients)
+        written = []
+
+        class _Ydl:
+            def __init__(self, opts):
+                self.opts = opts
+
+            def extract_info(self, url, download):
+                stem = os.path.join(out, "v.f401.mp4")
+                if self.opts["_rung"] == "a":
+                    with open(stem + ".part", "wb") as f:
+                        f.write(b"x" * 10)
+                    d._hook({"status": "downloading", "tmpfilename": stem + ".part",
+                             "filename": stem, "downloaded_bytes": 10})
+                    raise dl.yt_dlp.utils.DownloadError("HTTP Error 403: Forbidden")
+                final = os.path.join(out, "v.mp4")
+                open(final, "wb").close()
+                written.append(final)
+                return {"filepath": final}
+
+            def close(self):
+                pass
+
+        with mock.patch.object(dl.yt_dlp, "YoutubeDL", _Ydl):
+            path = d._run_download("https://www.youtube.com/watch?v=aaaaaaaaaaa",
+                                   os.path.join(out, "%(title)s.%(ext)s"), {})
+        self.assertEqual(path, written[0])
+        self.assertEqual(sorted(os.listdir(out)), ["already here.mp4", "v.mp4"])
 
 
 class BatchRun(_Base):

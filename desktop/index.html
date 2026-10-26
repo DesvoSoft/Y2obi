@@ -1192,7 +1192,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!m) { TRANSCRIPT_HINT.textContent = ''; return; }
     const files = selectedSrt ? '.txt and .srt' : '.txt';
     const where = playlist
-      ? ` One ${files} per video, in Downloads\\Y2obi\\${playlist.title}. Videos already transcribed there are skipped.`
+      ? ` One ${files} per video, in Downloads\\Y2obi\\${playlist.folder || playlist.title}. Videos already transcribed there are skipped.`
       : ` Saves ${files}.`;
     TRANSCRIPT_HINT.textContent = m.installed
       ? 'Runs offline on your machine. Long videos take a while.' + where

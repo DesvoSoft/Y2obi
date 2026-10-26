@@ -395,6 +395,34 @@ def playlist_ref(url):
     return list_id, has_video
 
 
+def is_channel(url):
+    """A channel page (@handle, /channel/, /c/, /user/), which is a list of
+    videos, never one. Asking get_info about it first walked every player
+    client before giving up: 225 s measured on @YouTube/videos, against 3 s for
+    the flat listing."""
+    try:
+        parts = urllib.parse.urlsplit(str(url).strip())
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    if not (host == "youtube.com" or host.endswith(".youtube.com")):
+        return False
+    return (parts.path or "").startswith(("/@", "/channel/", "/c/", "/user/"))
+
+
+def channel_videos_url(url):
+    """The Videos tab of a channel URL that names no tab. The bare channel page
+    lists its tabs (Videos, Shorts, Live) rather than videos, which
+    playlist_entries rightly skips -- leaving "no videos" for a busy channel."""
+    parts = urllib.parse.urlsplit(str(url).strip())
+    segs = [s for s in parts.path.split("/") if s]
+    named = 1 if segs and segs[0].startswith("@") else 2
+    if len(segs) != named:
+        return url
+    return urllib.parse.urlunsplit(
+        (parts.scheme or "https", parts.netloc, "/" + "/".join(segs) + "/videos", "", ""))
+
+
 def is_mix(list_id):
     """Mixes (RD...) are generated per viewer and have no fixed end, so they
     are not offered as something to work through."""
@@ -461,6 +489,7 @@ class Downloader:
         self._progress_cb = None
         self._status_cb = None
         self._cancel = False
+        self._partials = set()  # files the current rung has written, see _discard_partials
 
     def set_callbacks(self, progress=None, status=None):
         self._progress_cb = progress
@@ -690,9 +719,12 @@ class Downloader:
             opts.update(fmt_opts)
             self._rung_opts(opts, clients, use_cookies)
             ydl = yt_dlp.YoutubeDL(opts)
+            self._partials = set()
             try:
                 info = ydl.extract_info(url, download=True)
             except yt_dlp.utils.DownloadError as e:
+                ydl.close()  # releases the handle on the .part before deleting it
+                self._discard_partials()
                 if "Cancelled" in str(e):
                     raise
                 last_err = last_err or e
@@ -769,7 +801,29 @@ class Downloader:
                                    **self._clip_opts(clip)},
                                   what="audio download")
 
+    def _discard_partials(self):
+        """Delete what a failed rung left behind.
+
+        A client that 403s halfway through a 4K stream leaves its .part (and
+        any stream it did finish) beside the file the next client then writes,
+        and in a playlist folder that is hundreds of MB of junk per video.
+        Only files this rung's own hook reported are touched, never a file that
+        was already there.
+        """
+        for p in getattr(self, '_partials', ()):
+            for f in (p, p + '.part', p + '.ytdl'):
+                try:
+                    if os.path.isfile(f):
+                        os.unlink(f)
+                except OSError:
+                    pass
+        self._partials = set()
+
     def _hook(self, d):
+        if d['status'] in ('downloading', 'finished'):
+            for key in ('tmpfilename', 'filename'):
+                if d.get(key):
+                    self._partials.add(d[key])
         if self._cancel:
             raise yt_dlp.utils.DownloadError("Cancelled")
         if d['status'] == 'already_downloaded':
